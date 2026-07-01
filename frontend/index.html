@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>텍스트 RPG - Ollama 모험</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>텍스트 RPG 모험</h1>
+            <div class="header-controls">
+                <button id="newGameBtn" class="btn btn-secondary">새 게임</button>
+                <button id="settingsBtn" class="btn btn-secondary">설정</button>
+            </div>
+        </header>
+
+        <div class="game-wrapper">
+            <!-- Left Panel: Chat/Narrative -->
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <h2>서사</h2>
+                    <div class="location-badge" id="locationBadge">교차로 마을</div>
+                </div>
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message system">
+                        <p>텍스트 RPG 모험에 오신 것을 환영합니다! 아래에 행동을 입력하여 당신의 여정을 시작하세요.</p>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input
+                        type="text"
+                        id="actionInput"
+                        class="action-input"
+                        placeholder="예: '주변을 살펴본다', '상인과 대화한다', '고블린을 공격한다'..."
+                        autocomplete="off"
+                    >
+                    <button id="submitBtn" class="btn btn-primary">전송</button>
+                </div>
+            </div>
+
+            <!-- Right Panel: Inventory and Stats -->
+            <div class="side-panel">
+                <!-- Player Stats -->
+                <div class="section player-stats">
+                    <h3>플레이어 스탯</h3>
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">이름:</span>
+                            <span class="stat-value" id="playerName">모험가</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">레벨:</span>
+                            <span class="stat-value" id="playerLevel">1</span>
+                        </div>
+                    </div>
+
+                    <div class="hp-bar-container">
+                        <div class="hp-bar-label">
+                            <span>체력</span>
+                            <span id="hpValue">100/100</span>
+                        </div>
+                        <div class="hp-bar">
+                            <div class="hp-bar-fill" id="hpBarFill" style="width: 100%"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">공격:</span>
+                            <span class="stat-value" id="playerAttack">10</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">방어:</span>
+                            <span class="stat-value" id="playerDefense">5</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Equipment Slots -->
+                <div class="section equipment">
+                    <h3>장비</h3>
+                    <div class="equipment-slots">
+                        <div class="slot" id="weaponSlot">
+                            <div class="slot-label">무기</div>
+                            <div class="slot-content" id="weaponSlotContent">
+                                <div class="empty-slot">-</div>
+                            </div>
+                            <button class="slot-action" id="unequipWeaponBtn" style="display: none;">장착 해제</button>
+                        </div>
+                        <div class="slot" id="armorSlot">
+                            <div class="slot-label">방어구</div>
+                            <div class="slot-content" id="armorSlotContent">
+                                <div class="empty-slot">-</div>
+                            </div>
+                            <button class="slot-action" id="unequipArmorBtn" style="display: none;">장착 해제</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Inventory -->
+                <div class="section inventory">
+                    <h3>인벤토리</h3>
+                    <div class="inventory-info" id="inventoryInfo">0/20</div>
+                    <div class="inventory-list" id="inventoryList">
+                        <div class="empty-message">아이템이 없습니다</div>
+                    </div>
+                </div>
+
+                <!-- Quest Log -->
+                <div class="section quests">
+                    <h3>퀘스트</h3>
+                    <div class="quest-list" id="questList">
+                        <div class="empty-message">진행 중인 퀘스트가 없습니다</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>설정</h2>
+                <button class="close-btn" id="closeSettingsBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="playerNameInput">플레이어 이름:</label>
+                    <input type="text" id="playerNameInput" placeholder="이름을 입력하세요">
+                    <button id="saveNameBtn" class="btn btn-primary">저장</button>
+                </div>
+                <div class="setting-group">
+                    <label for="ollamaUrlInput">Ollama URL:</label>
+                    <input type="text" id="ollamaUrlInput" value="http://localhost:11434" placeholder="Ollama API URL">
+                    <p class="hint">Ollama가 실행 중인지 확인하세요: <code>ollama serve</code></p>
+                </div>
+                <div class="setting-group">
+                    <button id="testOllamaBtn" class="btn btn-secondary">Ollama 연결 테스트</button>
+                    <div id="ollamaStatus" class="status-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
