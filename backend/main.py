@@ -21,6 +21,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+frontend_path = Path(__file__).parent.parent / "frontend"
+if frontend_path.exists():
+    app.mount("/frontend", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+
 ollama = OllamaClient()
 
 SAVE_FILE = "player_state.json"
@@ -216,10 +220,6 @@ async def debug_add_item(item_id: str, name: str, quantity: int = 1):
     save_player_state(player)
     return {"player": player.dict()}
 
-
-frontend_path = Path(__file__).parent.parent / "frontend"
-if frontend_path.exists():
-    app.mount("/frontend", StaticFiles(directory=str(frontend_path)), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

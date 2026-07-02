@@ -5,15 +5,15 @@
 }
 
 :root {
-    --primary-color: #2c3e50;
-    --secondary-color: #34495e;
-    --accent-color: #e74c3c;
-    --success-color: #27ae60;
-    --text-color: #ecf0f1;
-    --text-muted: #95a5a6;
-    --border-color: #1a252f;
-    --bg-dark: #1a1a1a;
-    --bg-darker: #0f0f0f;
+    --primary-color: #000000;
+    --secondary-color: #000000;
+    --accent-color: #ffffff;
+    --success-color: #ffffff;
+    --text-color: #ffffff;
+    --text-muted: #cccccc;
+    --border-color: #ffffff;
+    --bg-dark: #000000;
+    --bg-darker: #000000;
 }
 
 body {
@@ -31,9 +31,9 @@ body {
 }
 
 .header {
-    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    background: #000000;
     padding: 1rem 2rem;
-    border-bottom: 2px solid var(--accent-color);
+    border-bottom: 2px solid #ffffff;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -61,8 +61,8 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background-color: var(--secondary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 8px;
     overflow: hidden;
 }
@@ -72,8 +72,8 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    background-color: var(--primary-color);
+    border-bottom: 1px solid #ffffff;
+    background-color: #000000;
 }
 
 .chat-header h2 {
@@ -81,11 +81,13 @@ body {
 }
 
 .location-badge {
-    background-color: var(--accent-color);
+    background-color: #000000;
     padding: 0.5rem 1rem;
+    border: 1px solid #ffffff;
     border-radius: 20px;
     font-size: 0.9rem;
     font-weight: 500;
+    color: #ffffff;
 }
 
 .chat-messages {
@@ -117,28 +119,36 @@ body {
 }
 
 .message.system {
-    background-color: var(--primary-color);
-    border-left: 3px solid var(--accent-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-left: 3px solid #ffffff;
     align-self: flex-start;
+    color: #ffffff;
 }
 
 .message.player {
-    background-color: var(--secondary-color);
-    border-left: 3px solid var(--success-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-left: 3px solid #ffffff;
     align-self: flex-end;
     max-width: 80%;
+    color: #ffffff;
 }
 
 .message.narrator {
-    background-color: #2a3b4c;
-    border-left: 3px solid #3498db;
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-left: 3px solid #ffffff;
     align-self: flex-start;
+    color: #ffffff;
 }
 
 .message.event {
-    background-color: #5d4037;
-    border-left: 3px solid #ff9800;
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-left: 3px solid #ffffff;
     align-self: flex-start;
+    color: #ffffff;
 }
 
 .message p {
@@ -149,24 +159,24 @@ body {
     display: flex;
     gap: 0.5rem;
     padding: 1rem;
-    border-top: 1px solid var(--border-color);
-    background-color: var(--primary-color);
+    border-top: 1px solid #ffffff;
+    background-color: #000000;
 }
 
 .action-input {
     flex: 1;
     padding: 0.75rem;
-    background-color: var(--secondary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 4px;
-    color: var(--text-color);
+    color: #ffffff;
     font-size: 1rem;
 }
 
 .action-input:focus {
     outline: none;
-    border-color: var(--accent-color);
-    box-shadow: 0 0 8px rgba(231, 76, 60, 0.3);
+    border-color: #ffffff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
 }
 
 .action-input::placeholder {
@@ -197,8 +207,8 @@ body {
 }
 
 .section {
-    background-color: var(--secondary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 8px;
     padding: 1rem;
 }
@@ -206,8 +216,9 @@ body {
 .section h3 {
     margin-bottom: 1rem;
     font-size: 1.1rem;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid #ffffff;
     padding-bottom: 0.5rem;
+    color: #ffffff;
 }
 
 .player-stats {
@@ -251,15 +262,15 @@ body {
 .hp-bar {
     width: 100%;
     height: 20px;
-    background-color: var(--primary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 4px;
     overflow: hidden;
 }
 
 .hp-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--success-color), #2ecc71);
+    background: linear-gradient(90deg, #ffffff, #cccccc);
     transition: width 0.3s ease;
 }
 
@@ -270,8 +281,8 @@ body {
 }
 
 .slot {
-    background-color: var(--primary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 6px;
     padding: 0.75rem;
     text-align: center;
@@ -279,7 +290,7 @@ body {
 
 .slot-label {
     font-size: 0.9rem;
-    color: var(--text-muted);
+    color: #cccccc;
     margin-bottom: 0.5rem;
     font-weight: 500;
 }
@@ -290,9 +301,9 @@ body {
     align-items: center;
     justify-content: center;
     margin-bottom: 0.5rem;
-    border: 1px dashed var(--border-color);
+    border: 1px dashed #ffffff;
     border-radius: 4px;
-    background-color: rgba(0, 0, 0, 0.2);
+    background-color: #000000;
 }
 
 .empty-slot {
@@ -352,16 +363,16 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 0.75rem;
-    background-color: var(--primary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s;
 }
 
 .inventory-item:hover {
-    background-color: #3a4c57;
-    border-color: var(--accent-color);
+    background-color: #1a1a1a;
+    border-color: #ffffff;
 }
 
 .inventory-item-name {
@@ -370,12 +381,14 @@ body {
 }
 
 .inventory-item-qty {
-    background-color: var(--accent-color);
+    background-color: #1a1a1a;
     padding: 0.25rem 0.5rem;
+    border: 1px solid #ffffff;
     border-radius: 3px;
     font-size: 0.85rem;
     font-weight: 600;
     margin-right: 0.5rem;
+    color: #ffffff;
 }
 
 .inventory-item-actions {
@@ -400,11 +413,13 @@ body {
 
 .quest-item {
     padding: 0.75rem;
-    background-color: var(--primary-color);
-    border-left: 3px solid #ff9800;
+    background-color: #000000;
+    border-left: 3px solid #ffffff;
     border-radius: 4px;
     font-size: 0.9rem;
     line-height: 1.4;
+    border: 1px solid #ffffff;
+    color: #ffffff;
 }
 
 .btn {
@@ -423,22 +438,25 @@ body {
 }
 
 .btn-primary {
-    background-color: var(--accent-color);
-    color: white;
+    background-color: #000000;
+    color: #ffffff;
+    border: 2px solid #ffffff;
 }
 
 .btn-primary:hover {
-    background-color: #c0392b;
+    background-color: #1a1a1a;
+    border: 2px solid #ffffff;
 }
 
 .btn-secondary {
-    background-color: var(--primary-color);
-    color: var(--text-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    color: #ffffff;
+    border: 1px solid #ffffff;
 }
 
 .btn-secondary:hover {
-    background-color: var(--secondary-color);
+    background-color: #1a1a1a;
+    border: 1px solid #ffffff;
 }
 
 .btn-small {
@@ -465,14 +483,14 @@ body {
 }
 
 .modal-content {
-    background-color: var(--secondary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 8px;
     max-width: 500px;
     width: 90%;
     max-height: 80vh;
     overflow-y: auto;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 10px 40px rgba(255, 255, 255, 0.2);
 }
 
 .modal-header {
@@ -480,8 +498,8 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 1.5rem;
-    border-bottom: 1px solid var(--border-color);
-    background-color: var(--primary-color);
+    border-bottom: 1px solid #ffffff;
+    background-color: #000000;
 }
 
 .close-btn {
@@ -520,16 +538,16 @@ body {
 .setting-group input {
     width: 100%;
     padding: 0.75rem;
-    background-color: var(--primary-color);
-    border: 1px solid var(--border-color);
+    background-color: #000000;
+    border: 1px solid #ffffff;
     border-radius: 4px;
-    color: var(--text-color);
+    color: #ffffff;
     margin-bottom: 0.5rem;
 }
 
 .setting-group input:focus {
     outline: none;
-    border-color: var(--accent-color);
+    border-color: #ffffff;
 }
 
 .hint {

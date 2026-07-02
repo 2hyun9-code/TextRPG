@@ -7,7 +7,7 @@ from models import PlayerState, AIResponse
 class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
         self.base_url = base_url
-        self.model = "llama2"
+        self.model = "gemma2:2b"
         self.client = httpx.AsyncClient(timeout=60.0)
 
     async def close(self):
