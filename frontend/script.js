@@ -24,6 +24,26 @@ const elements = {
     playerStrength: document.getElementById('playerStrength'),
     playerDexterity: document.getElementById('playerDexterity'),
     playerIntelligence: document.getElementById('playerIntelligence'),
+    playerGold: document.getElementById('playerGold'),
+    xpValue: document.getElementById('xpValue'),
+    xpBarFill: document.getElementById('xpBarFill'),
+    combatSection: document.getElementById('combatSection'),
+    huntSection: document.getElementById('huntSection'),
+    huntBtn: document.getElementById('huntBtn'),
+    enemyName: document.getElementById('enemyName'),
+    enemyLevel: document.getElementById('enemyLevel'),
+    enemyHpValue: document.getElementById('enemyHpValue'),
+    enemyHpBarFill: document.getElementById('enemyHpBarFill'),
+    attackBtn: document.getElementById('attackBtn'),
+    fleeBtn: document.getElementById('fleeBtn'),
+    shopBtn: document.getElementById('shopBtn'),
+    shopModal: document.getElementById('shopModal'),
+    closeShopBtn: document.getElementById('closeShopBtn'),
+    shopGold: document.getElementById('shopGold'),
+    buyTabBtn: document.getElementById('buyTabBtn'),
+    sellTabBtn: document.getElementById('sellTabBtn'),
+    shopBuyList: document.getElementById('shopBuyList'),
+    shopSellList: document.getElementById('shopSellList'),
     weaponSlotContent: document.getElementById('weaponSlotContent'),
     armorSlotContent: document.getElementById('armorSlotContent'),
     unequipWeaponBtn: document.getElementById('unequipWeaponBtn'),
@@ -51,6 +71,7 @@ async function initializeGame() {
         if (!currentPlayer.job_selected) {
             await showJobSelectionModal();
         } else {
+            restoreChatHistory();
             addSystemMessage("게임이 로드되었습니다! 무엇을 하시겠습니까?");
             updateUI();
         }
@@ -58,6 +79,26 @@ async function initializeGame() {
         console.error('Error loading game:', error);
         addSystemMessage('게임 로드에 실패했습니다. 백엔드 서버가 포트 8000에서 실행 중인지 확인하세요.');
     }
+}
+
+function restoreChatHistory() {
+    // 서버에 저장된 최근 대화를 채팅창에 복원 (새로고침해도 이야기 유지)
+    const history = currentPlayer.recent_history || [];
+    if (history.length === 0) return;
+
+    if (currentPlayer.story_summary) {
+        addSystemMessage(`[지금까지의 이야기] ${currentPlayer.story_summary}`);
+    }
+
+    history.forEach(msg => {
+        if (msg.role === '플레이어') {
+            addPlayerMessage(msg.content);
+        } else if (msg.role === '나레이터') {
+            addNarratorMessage(msg.content);
+        } else {
+            addEventMessage(msg.content);
+        }
+    });
 }
 
 async function showJobSelectionModal() {
@@ -128,49 +169,14 @@ function addMessage(role, content, type = 'narrative') {
 
     gameState.messageHistory.push({ role, content, type });
 
-    // 메시지가 500개 도달하면 요약 실행
-    if (gameState.messageHistory.length === 500) {
-        summarizeStory();
-    }
-    // 메시지가 500개 이상이면 가장 오래된 것부터 삭제 (최대 500개 유지)
-    else if (gameState.messageHistory.length > 500) {
+    // 화면 표시용 정리: 500개 초과 시 오래된 메시지부터 제거
+    // (AI 기억은 서버가 자동 관리하므로 화면만 정리하면 됨)
+    if (gameState.messageHistory.length > 500) {
         gameState.messageHistory.shift();
         const firstMessage = elements.chatMessages.firstChild;
         if (firstMessage) {
             firstMessage.remove();
         }
-    }
-}
-
-async function summarizeStory() {
-    addSystemMessage("요약 중...");
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/game/summarize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(gameState.messageHistory)
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            addSystemMessage("저장 완료");
-        } else {
-            addSystemMessage(`오류: ${data.message}`);
-        }
-
-        // 요약 후 가장 오래된 메시지들 제거 (250개만 유지)
-        while (gameState.messageHistory.length > 250) {
-            gameState.messageHistory.shift();
-            const firstMessage = elements.chatMessages.firstChild;
-            if (firstMessage) {
-                firstMessage.remove();
-            }
-        }
-    } catch (error) {
-        console.error('Error summarizing story:', error);
-        addSystemMessage('요약 생성 중 오류가 발생했습니다.');
     }
 }
 
@@ -205,6 +211,11 @@ async function submitAction() {
 
     if (!currentPlayer) {
         addSystemMessage('게임이 로드되지 않았습니다. 페이지를 새로고침하세요.');
+        return;
+    }
+
+    if (currentPlayer.current_enemy) {
+        addSystemMessage('전투 중에는 행동할 수 없습니다. 공격 또는 도망 버튼을 사용하세요.');
         return;
     }
 
@@ -272,23 +283,210 @@ function updateUI() {
     const hpPercent = Math.max(0, (currentPlayer.hp / currentPlayer.max_hp) * 100);
     elements.hpBarFill.style.width = hpPercent + '%';
 
-    const effectiveAttack = currentPlayer.equipment.weapon
-        ? currentPlayer.attack + (currentPlayer.equipment.weapon.effect.attack_bonus || 0)
-        : currentPlayer.attack;
-    elements.playerAttack.textContent = effectiveAttack;
-
-    const effectiveDefense = currentPlayer.equipment.armor
-        ? currentPlayer.defense + (currentPlayer.equipment.armor.effect.defense_bonus || 0)
-        : currentPlayer.defense;
-    elements.playerDefense.textContent = effectiveDefense;
+    // 백엔드에서 계산된 스탯 사용 (직업 보너스 + 장비 보너스 포함)
+    elements.playerAttack.textContent = currentPlayer.effective_attack ?? currentPlayer.attack;
+    elements.playerDefense.textContent = currentPlayer.effective_defense ?? currentPlayer.defense;
 
     elements.playerStrength.textContent = currentPlayer.strength;
     elements.playerDexterity.textContent = currentPlayer.dexterity;
     elements.playerIntelligence.textContent = currentPlayer.intelligence;
 
+    // 골드, 경험치
+    elements.playerGold.textContent = currentPlayer.gold ?? 0;
+    const expRequired = currentPlayer.exp_required || (currentPlayer.level * 100);
+    elements.xpValue.textContent = `${currentPlayer.experience}/${expRequired}`;
+    const xpPercent = Math.min(100, (currentPlayer.experience / expRequired) * 100);
+    elements.xpBarFill.style.width = xpPercent + '%';
+
+    updateCombatPanel();
     updateEquipmentSlots();
     updateInventory();
     updateQuests();
+}
+
+function updateCombatPanel() {
+    const enemy = currentPlayer.current_enemy;
+
+    if (enemy) {
+        elements.combatSection.classList.remove('hidden');
+        elements.huntSection.classList.add('hidden');
+        elements.enemyName.textContent = enemy.name;
+        elements.enemyLevel.textContent = enemy.level;
+        elements.enemyHpValue.textContent = `${enemy.hp}/${enemy.max_hp}`;
+        const enemyHpPercent = Math.max(0, (enemy.hp / enemy.max_hp) * 100);
+        elements.enemyHpBarFill.style.width = enemyHpPercent + '%';
+        elements.actionInput.disabled = true;
+        elements.submitBtn.disabled = true;
+    } else {
+        elements.combatSection.classList.add('hidden');
+        elements.huntSection.classList.remove('hidden');
+        if (!gameState.isLoading) {
+            elements.actionInput.disabled = false;
+            elements.submitBtn.disabled = false;
+        }
+    }
+}
+
+async function startCombat() {
+    if (gameState.isLoading) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/combat/start`, { method: 'POST' });
+
+        if (!response.ok) {
+            const error = await response.json();
+            addSystemMessage(`오류: ${error.detail}`);
+            return;
+        }
+
+        const data = await response.json();
+        currentPlayer = data.player;
+        data.logs.forEach(log => addEventMessage(log));
+        updateUI();
+    } catch (error) {
+        console.error('Error starting combat:', error);
+        addSystemMessage('전투 시작 오류: ' + error.message);
+    }
+}
+
+async function combatAction(endpoint) {
+    if (gameState.isLoading) return;
+    gameState.isLoading = true;
+    elements.attackBtn.disabled = true;
+    elements.fleeBtn.disabled = true;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/combat/${endpoint}`, { method: 'POST' });
+
+        if (!response.ok) {
+            const error = await response.json();
+            addSystemMessage(`오류: ${error.detail}`);
+            return;
+        }
+
+        const data = await response.json();
+        currentPlayer = data.player;
+        data.logs.forEach(log => addEventMessage(log));
+        updateUI();
+    } catch (error) {
+        console.error('Error in combat:', error);
+        addSystemMessage('전투 오류: ' + error.message);
+    } finally {
+        gameState.isLoading = false;
+        elements.attackBtn.disabled = false;
+        elements.fleeBtn.disabled = false;
+        updateCombatPanel();
+    }
+}
+
+async function openShop() {
+    if (currentPlayer && currentPlayer.current_enemy) {
+        addSystemMessage('전투 중에는 상점을 이용할 수 없습니다.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/shop/list`);
+        const data = await response.json();
+
+        elements.shopGold.textContent = data.gold;
+
+        elements.shopBuyList.innerHTML = data.stock.map(item => `
+            <div class="shop-item">
+                <div class="shop-item-info">
+                    <div class="shop-item-name">${item.name}</div>
+                    <div class="shop-item-desc">${item.description}</div>
+                </div>
+                <span class="shop-item-price">${item.price} G</span>
+                <button class="btn btn-small" data-buy-item="${item.id}">구매</button>
+            </div>
+        `).join('');
+
+        if (data.sellable.length === 0) {
+            elements.shopSellList.innerHTML = '<div class="empty-message">판매할 수 있는 아이템이 없습니다</div>';
+        } else {
+            elements.shopSellList.innerHTML = data.sellable.map(item => `
+                <div class="shop-item">
+                    <div class="shop-item-info">
+                        <div class="shop-item-name">${item.name} (x${item.quantity})</div>
+                    </div>
+                    <span class="shop-item-price">${item.sell_price} G</span>
+                    <button class="btn btn-small" data-sell-item="${item.id}">판매</button>
+                </div>
+            `).join('');
+        }
+
+        document.querySelectorAll('[data-buy-item]').forEach(btn => {
+            btn.addEventListener('click', () => buyItem(btn.dataset.buyItem));
+        });
+        document.querySelectorAll('[data-sell-item]').forEach(btn => {
+            btn.addEventListener('click', () => sellItem(btn.dataset.sellItem));
+        });
+
+        elements.shopModal.classList.remove('hidden');
+    } catch (error) {
+        console.error('Error opening shop:', error);
+        addSystemMessage('상점을 여는데 실패했습니다.');
+    }
+}
+
+function closeShop() {
+    elements.shopModal.classList.add('hidden');
+}
+
+function switchShopTab(tab) {
+    if (tab === 'buy') {
+        elements.buyTabBtn.classList.add('active');
+        elements.sellTabBtn.classList.remove('active');
+        elements.shopBuyList.classList.remove('hidden');
+        elements.shopSellList.classList.add('hidden');
+    } else {
+        elements.sellTabBtn.classList.add('active');
+        elements.buyTabBtn.classList.remove('active');
+        elements.shopSellList.classList.remove('hidden');
+        elements.shopBuyList.classList.add('hidden');
+    }
+}
+
+async function buyItem(itemId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/shop/buy?item_id=${itemId}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addSystemMessage(data.message);
+        updateUI();
+        openShop();
+    } catch (error) {
+        console.error('Error buying item:', error);
+        addSystemMessage('구매 오류: ' + error.message);
+    }
+}
+
+async function sellItem(itemId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/shop/sell?item_id=${itemId}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addSystemMessage(data.message);
+        updateUI();
+        await openShop();
+        switchShopTab('sell');
+    } catch (error) {
+        console.error('Error selling item:', error);
+        addSystemMessage('판매 오류: ' + error.message);
+    }
 }
 
 function updateEquipmentSlots() {
@@ -509,8 +707,21 @@ function setupEventListeners() {
     elements.unequipWeaponBtn.addEventListener('click', () => unequipItem('weapon'));
     elements.unequipArmorBtn.addEventListener('click', () => unequipItem('armor'));
 
+    elements.huntBtn.addEventListener('click', startCombat);
+    elements.attackBtn.addEventListener('click', () => combatAction('attack'));
+    elements.fleeBtn.addEventListener('click', () => combatAction('flee'));
+
+    elements.shopBtn.addEventListener('click', openShop);
+    elements.closeShopBtn.addEventListener('click', closeShop);
+    elements.buyTabBtn.addEventListener('click', () => switchShopTab('buy'));
+    elements.sellTabBtn.addEventListener('click', () => switchShopTab('sell'));
+
     elements.settingsModal.addEventListener('click', (e) => {
         if (e.target === elements.settingsModal) closeSettings();
+    });
+
+    elements.shopModal.addEventListener('click', (e) => {
+        if (e.target === elements.shopModal) closeShop();
     });
 }
 

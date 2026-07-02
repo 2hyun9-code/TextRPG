@@ -33,6 +33,18 @@ class Equipment(BaseModel):
     armor: Optional[Item] = None
 
 
+class Enemy(BaseModel):
+    id: str
+    name: str
+    level: int = 1
+    hp: int
+    max_hp: int
+    attack: int
+    defense: int
+    xp_reward: int = 0
+    gold_reward: int = 0
+
+
 class Inventory(BaseModel):
     items: List[Item] = Field(default_factory=list)
     max_slots: int = 20
@@ -78,14 +90,60 @@ class PlayerState(BaseModel):
     quest_log: List[str] = Field(default_factory=list)
     job_selected: bool = False
     story_summary: str = ""
+    recent_history: List[Dict[str, str]] = Field(default_factory=list)
+    gold: int = 50
+    current_enemy: Optional[Enemy] = None
+
+    def add_history(self, role: str, content: str) -> None:
+        """대화 기록 추가 (단기 기억)"""
+        self.recent_history.append({"role": role, "content": content})
 
     def take_damage(self, damage: int) -> int:
-        actual_damage = max(1, damage - self.defense)
+        actual_damage = max(1, damage - self.get_effective_defense())
         self.hp = max(0, self.hp - actual_damage)
         return actual_damage
 
     def heal(self, amount: int) -> None:
         self.hp = min(self.max_hp, self.hp + amount)
+
+    def get_effective_defense(self) -> int:
+        base_defense = self.defense
+        if self.equipment.armor:
+            base_defense += self.equipment.armor.effect.get("defense_bonus", 0)
+        return base_defense
+
+    def exp_required(self) -> int:
+        return self.level * 100
+
+    def gain_experience(self, amount: int) -> int:
+        """경험치를 획득하고, 올라간 레벨 수를 반환"""
+        self.experience += amount
+        levels_gained = 0
+        while self.experience >= self.exp_required():
+            self.experience -= self.exp_required()
+            self._level_up()
+            levels_gained += 1
+        return levels_gained
+
+    def _level_up(self) -> None:
+        self.level += 1
+
+        growth = {
+            JobClass.WARRIOR: {"hp": 15, "attack": 3, "defense": 2, "strength": 2, "dexterity": 1, "intelligence": 1},
+            JobClass.ROGUE: {"hp": 10, "attack": 2, "defense": 1, "strength": 1, "dexterity": 3, "intelligence": 1},
+            JobClass.MAGE: {"hp": 8, "attack": 2, "defense": 1, "strength": 1, "dexterity": 1, "intelligence": 3},
+            JobClass.PALADIN: {"hp": 13, "attack": 2, "defense": 2, "strength": 2, "dexterity": 1, "intelligence": 2},
+            JobClass.RANGER: {"hp": 11, "attack": 2, "defense": 1, "strength": 2, "dexterity": 2, "intelligence": 1},
+        }
+
+        g = growth.get(self.job_class, growth[JobClass.WARRIOR])
+        self.max_hp += g["hp"]
+        self.hp = self.max_hp
+        self.attack += g["attack"]
+        self.defense += g["defense"]
+        self.strength += g["strength"]
+        self.dexterity += g["dexterity"]
+        self.intelligence += g["intelligence"]
 
     def get_effective_attack(self) -> int:
         ability_bonus = 0
@@ -163,7 +221,12 @@ class PlayerState(BaseModel):
         self.defense = stats["defense"]
 
     def dict(self, **kwargs) -> Dict[str, Any]:
-        return super().model_dump(**kwargs)
+        data = super().model_dump(**kwargs)
+        # 프론트엔드 표시용 계산 스탯 (저장 시 무시됨)
+        data["effective_attack"] = self.get_effective_attack()
+        data["effective_defense"] = self.get_effective_defense()
+        data["exp_required"] = self.exp_required()
+        return data
 
 
 class PlayerAction(BaseModel):

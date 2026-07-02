@@ -11,6 +11,7 @@
         <header class="header">
             <h1>텍스트 RPG 모험</h1>
             <div class="header-controls">
+                <button id="shopBtn" class="btn btn-secondary">상점</button>
                 <button id="newGameBtn" class="btn btn-secondary">새 게임</button>
                 <button id="settingsBtn" class="btn btn-secondary">설정</button>
             </div>
@@ -70,6 +71,23 @@
                         </div>
                     </div>
 
+                    <div class="hp-bar-container">
+                        <div class="hp-bar-label">
+                            <span>경험치</span>
+                            <span id="xpValue">0/100</span>
+                        </div>
+                        <div class="hp-bar">
+                            <div class="xp-bar-fill" id="xpBarFill" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">골드:</span>
+                            <span class="stat-value" id="playerGold">50</span>
+                        </div>
+                    </div>
+
                     <div class="stat-group">
                         <div class="stat-row">
                             <span class="stat-label">공격:</span>
@@ -95,6 +113,39 @@
                             <span class="stat-value" id="playerIntelligence">10</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Combat Panel -->
+                <div class="section combat hidden" id="combatSection">
+                    <h3>전투</h3>
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">적:</span>
+                            <span class="stat-value" id="enemyName">-</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">레벨:</span>
+                            <span class="stat-value" id="enemyLevel">-</span>
+                        </div>
+                    </div>
+                    <div class="hp-bar-container">
+                        <div class="hp-bar-label">
+                            <span>적 체력</span>
+                            <span id="enemyHpValue">0/0</span>
+                        </div>
+                        <div class="hp-bar">
+                            <div class="hp-bar-fill" id="enemyHpBarFill" style="width: 100%"></div>
+                        </div>
+                    </div>
+                    <div class="combat-actions">
+                        <button id="attackBtn" class="btn btn-primary">공격</button>
+                        <button id="fleeBtn" class="btn btn-secondary">도망</button>
+                    </div>
+                </div>
+
+                <!-- Hunt Button -->
+                <div class="section hunt-section" id="huntSection">
+                    <button id="huntBtn" class="btn btn-secondary hunt-btn">사냥하러 가기</button>
                 </div>
 
                 <!-- Equipment Slots -->
@@ -134,6 +185,25 @@
                         <div class="empty-message">진행 중인 퀘스트가 없습니다</div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shop Modal -->
+    <div id="shopModal" class="modal hidden">
+        <div class="modal-content shop-modal-content">
+            <div class="modal-header">
+                <h2>상점</h2>
+                <button class="close-btn" id="closeShopBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="shop-gold">보유 골드: <span id="shopGold">0</span></div>
+                <div class="shop-tabs">
+                    <button class="btn btn-secondary shop-tab active" id="buyTabBtn">구매</button>
+                    <button class="btn btn-secondary shop-tab" id="sellTabBtn">판매</button>
+                </div>
+                <div id="shopBuyList" class="shop-list"></div>
+                <div id="shopSellList" class="shop-list hidden"></div>
             </div>
         </div>
     </div>

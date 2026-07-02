@@ -274,6 +274,116 @@ body {
     transition: width 0.3s ease;
 }
 
+.xp-bar-fill {
+    height: 100%;
+    background: repeating-linear-gradient(45deg, #ffffff, #ffffff 4px, #666666 4px, #666666 8px);
+    transition: width 0.3s ease;
+}
+
+/* 전투 패널 */
+.section.combat {
+    border: 2px solid #ffffff;
+}
+
+.section.hidden {
+    display: none;
+}
+
+.combat-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.hunt-section {
+    padding: 0.75rem;
+}
+
+.hunt-btn {
+    width: 100%;
+}
+
+/* 상점 */
+.shop-modal-content {
+    max-width: 600px;
+}
+
+.shop-gold {
+    text-align: right;
+    color: #ffffff;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #ffffff;
+}
+
+.shop-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.shop-tab.active {
+    background-color: #1a1a1a;
+    border: 2px solid #ffffff;
+}
+
+.shop-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 350px;
+    overflow-y: auto;
+}
+
+.shop-list.hidden {
+    display: none;
+}
+
+.shop-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-radius: 4px;
+    gap: 0.75rem;
+}
+
+.shop-item-info {
+    flex: 1;
+}
+
+.shop-item-name {
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.shop-item-desc {
+    color: #cccccc;
+    font-size: 0.8rem;
+    margin-top: 0.2rem;
+}
+
+.shop-item-price {
+    color: #ffffff;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.shop-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.shop-list::-webkit-scrollbar-thumb {
+    background: #ffffff;
+    border-radius: 2px;
+}
+
 .equipment-slots {
     display: grid;
     grid-template-columns: 1fr 1fr;

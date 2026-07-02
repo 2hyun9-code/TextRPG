@@ -24,12 +24,19 @@ class OllamaClient:
         if player_state.story_summary:
             story_context = f"\n이전 이야기 요약:\n{player_state.story_summary}\n"
 
-        return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level}입니다.
+        job_names = {
+            "warrior": "전사", "rogue": "도적", "mage": "마법사",
+            "paladin": "성기사", "ranger": "레인저"
+        }
+        job_name = job_names.get(player_state.job_class.value, "모험가")
+
+        return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level} {job_name}입니다.
 {story_context}
 현재 상태:
 - 체력: {player_state.hp}/{player_state.max_hp}
 - 공격: {player_state.get_effective_attack()}
-- 방어: {player_state.defense}
+- 방어: {player_state.get_effective_defense()}
+- 골드: {player_state.gold}
 - 위치: {player_state.location}
 - {weapon_info}
 - {armor_info}
@@ -51,10 +58,26 @@ class OllamaClient:
             return "- Empty"
         return "\n".join([f"- {item.name} x{item.quantity}" for item in player_state.inventory.items])
 
+    def _format_recent_history(self, player_state: PlayerState, limit: int = 10) -> str:
+        """최근 대화를 프롬프트용 텍스트로 변환 (단기 기억)"""
+        if not player_state.recent_history:
+            return ""
+
+        lines = [
+            f"{msg.get('role', '?')}: {msg.get('content', '')}"
+            for msg in player_state.recent_history[-limit:]
+        ]
+        return "\n최근 대화:\n" + "\n".join(lines) + "\n"
+
     async def generate_narrative(self, player_state: PlayerState, player_action: str) -> str:
         system_prompt = self._build_system_prompt(player_state)
+        history_text = self._format_recent_history(player_state)
 
-        prompt = f"{system_prompt}\n\nPlayer action: {player_action}"
+        prompt = f"""{system_prompt}
+{history_text}
+플레이어 행동: {player_action}
+
+나레이터 응답:"""
 
         try:
             response = await self.client.post(
@@ -71,22 +94,37 @@ class OllamaClient:
         except Exception as e:
             return f"[나레이터의 목소리가 희미해진다... 연결 오류: {str(e)}]"
 
-    async def summarize_messages(self, messages: list) -> str:
+    async def update_summary(self, old_summary: str, messages: list) -> str:
+        """증분 요약: 기존 요약과 새로운 사건을 병합해 갱신 (중기 기억)
+
+        덮어쓰기가 아니라 병합이므로 오래된 기억도 압축된 형태로 계속 보존된다.
+        """
         if not messages:
-            return ""
+            return old_summary
 
         message_text = "\n".join([
-            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
-            for msg in messages[-50:]
+            f"{msg.get('role', '?')}: {msg.get('content', '')}"
+            for msg in messages
         ])
 
-        prompt = f"""다음은 게임 진행 중 지난 이야기의 일부입니다. 이 내용을 2-3 문장으로 요약해주세요.
-지금까지의 주요 사건과 플레이어의 상황을 포함해서요.
+        existing = old_summary if old_summary else "(아직 없음 - 모험의 시작)"
 
-이야기:
+        prompt = f"""당신은 텍스트 RPG의 기록가입니다. 기존 요약과 새로운 사건을 하나의 요약으로 병합하세요.
+
+기존 요약:
+{existing}
+
+새로 일어난 사건:
 {message_text}
 
-요약:"""
+병합 규칙:
+1. 기존 요약의 중요한 내용은 유지하세요 (버리지 마세요)
+2. 새로운 사건 중 중요한 것을 추가하세요
+3. 만난 인물, 방문한 장소, 획득한 물건, 진행 중인 목표를 우선 보존하세요
+4. 5문장 이내로 압축하세요
+5. 요약문만 출력하세요 (다른 말 없이)
+
+갱신된 요약:"""
 
         try:
             response = await self.client.post(
@@ -99,9 +137,11 @@ class OllamaClient:
             )
             response.raise_for_status()
             result = response.json()
-            return result.get("response", "").strip()
+            new_summary = result.get("response", "").strip()
+            # 요약 생성 실패 시 기존 요약 유지 (기억 손실 방지)
+            return new_summary if new_summary else old_summary
         except Exception:
-            return "이전 이야기 요약을 불러올 수 없습니다."
+            return old_summary
 
     async def generate_special_event(self, player_state: PlayerState) -> Optional[str]:
         if not player_state.inventory.has_item("map"):
