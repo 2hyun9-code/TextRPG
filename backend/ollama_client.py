@@ -1,5 +1,6 @@
 import httpx
 import json
+import re
 from typing import Optional
 from models import PlayerState, AIResponse
 
@@ -30,6 +31,11 @@ class OllamaClient:
         }
         job_name = job_names.get(player_state.job_class.value, "모험가")
 
+        quest_info = "; ".join(
+            f"{q.title} ({q.progress}/{q.target_count})"
+            for q in player_state.active_quests
+        ) or "없음"
+
         return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level} {job_name}입니다.
 {story_context}
 현재 상태:
@@ -38,6 +44,7 @@ class OllamaClient:
 - 방어: {player_state.get_effective_defense()}
 - 골드: {player_state.gold}
 - 위치: {player_state.location}
+- 진행 중인 퀘스트: {quest_info}
 - {weapon_info}
 - {armor_info}
 - {special_info}
@@ -142,6 +149,84 @@ class OllamaClient:
             return new_summary if new_summary else old_summary
         except Exception:
             return old_summary
+
+    async def _generate_json(self, prompt: str, timeout: float = 30.0) -> Optional[dict]:
+        """JSON 강제 모드로 생성. 실패 시 None (폴백은 호출자 책임)"""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json",
+                },
+                timeout=timeout
+            )
+            response.raise_for_status()
+            raw = response.json().get("response", "").strip()
+            # JSON 블록 추출 (모델이 여분 텍스트를 붙이는 경우 대비)
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return None
+        except Exception:
+            return None
+
+    async def generate_enemy_concept(self, player_state: PlayerState) -> Optional[dict]:
+        """현재 이야기 맥락에 어울리는 독창적 몬스터를 AI가 창작"""
+        story = player_state.story_summary or "모험이 막 시작되었다."
+
+        prompt = f"""당신은 텍스트 RPG의 몬스터 디자이너입니다.
+
+장소: {player_state.location}
+이야기 맥락: {story}
+
+이 장소와 이야기에 어울리는 독창적인 몬스터 하나를 한국어로 창작하세요.
+유명 게임의 몬스터를 그대로 복사하지 말고 새로운 존재를 만드세요.
+
+반드시 이 JSON 형식으로만 답하세요:
+{{"name": "몬스터 이름 (2~10글자)", "description": "생김새와 분위기를 담은 한 문장"}}"""
+
+        data = await self._generate_json(prompt)
+        if not data:
+            return None
+
+        name = str(data.get("name", "")).strip()
+        description = str(data.get("description", "")).strip()
+
+        # 검증: 이름이 비었거나 비정상적으로 길면 폴백
+        if not name or len(name) > 20:
+            return None
+
+        return {"name": name, "description": description[:100]}
+
+    async def generate_item_concept(self, player_state: PlayerState, kind: str) -> Optional[dict]:
+        """전리품 장비의 이름/묘사를 AI가 창작 (스탯은 코드가 결정)"""
+        kind_kr = "무기" if kind == "weapon" else "방어구"
+        enemy_name = player_state.current_enemy.name if player_state.current_enemy else "쓰러진 적"
+
+        prompt = f"""당신은 텍스트 RPG의 아이템 디자이너입니다.
+
+장소: {player_state.location}
+방금 쓰러뜨린 적: {enemy_name}
+
+이 적이 남길 법한 독창적인 {kind_kr} 하나를 한국어로 창작하세요.
+
+반드시 이 JSON 형식으로만 답하세요:
+{{"name": "{kind_kr} 이름 (2~12글자)", "description": "한 문장 묘사"}}"""
+
+        data = await self._generate_json(prompt)
+        if not data:
+            return None
+
+        name = str(data.get("name", "")).strip()
+        description = str(data.get("description", "")).strip()
+
+        if not name or len(name) > 24:
+            return None
+
+        return {"name": name, "description": description[:100]}
 
     async def generate_special_event(self, player_state: PlayerState) -> Optional[str]:
         if not player_state.inventory.has_item("map"):

@@ -146,6 +146,13 @@
                 <!-- Hunt Button -->
                 <div class="section hunt-section" id="huntSection">
                     <button id="huntBtn" class="btn btn-secondary hunt-btn">사냥하러 가기</button>
+                    <button id="restBtn" class="btn btn-secondary hunt-btn" style="display: none;">여관에서 휴식</button>
+                </div>
+
+                <!-- Travel -->
+                <div class="section travel-section">
+                    <h3>이동</h3>
+                    <div class="travel-list" id="travelList"></div>
                 </div>
 
                 <!-- Equipment Slots -->
@@ -184,6 +191,26 @@
                     <div class="quest-list" id="questList">
                         <div class="empty-message">진행 중인 퀘스트가 없습니다</div>
                     </div>
+                    <button id="questBoardBtn" class="btn btn-secondary hunt-btn quest-board-btn">퀘스트 게시판</button>
+                </div>
+
+                <!-- Statistics -->
+                <div class="section statistics">
+                    <h3>기록</h3>
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">처치:</span>
+                            <span class="stat-value" id="statsKills">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">사망:</span>
+                            <span class="stat-value" id="statsDeaths">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">완료한 퀘스트:</span>
+                            <span class="stat-value" id="statsQuests">0</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -204,6 +231,20 @@
                 </div>
                 <div id="shopBuyList" class="shop-list"></div>
                 <div id="shopSellList" class="shop-list hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quest Board Modal -->
+    <div id="questModal" class="modal hidden">
+        <div class="modal-content shop-modal-content">
+            <div class="modal-header">
+                <h2>퀘스트 게시판</h2>
+                <button class="close-btn" id="closeQuestBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="shop-gold">수락 중: <span id="questActiveCount">0/3</span></div>
+                <div id="questOfferList" class="shop-list"></div>
             </div>
         </div>
     </div>

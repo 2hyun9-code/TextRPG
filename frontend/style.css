@@ -384,6 +384,64 @@ body {
     border-radius: 2px;
 }
 
+/* 이동 */
+.travel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.travel-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    background-color: #000000;
+    border: 1px solid #ffffff;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    gap: 0.5rem;
+}
+
+.travel-item:hover {
+    background-color: #1a1a1a;
+}
+
+.travel-item.current {
+    border: 2px solid #ffffff;
+    cursor: default;
+}
+
+.travel-item-name {
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.travel-item-level {
+    color: #cccccc;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+/* 퀘스트 진행 */
+.quest-progress {
+    color: #cccccc;
+    font-size: 0.85rem;
+    margin-top: 0.3rem;
+}
+
+.quest-board-btn {
+    margin-top: 0.75rem;
+}
+
+/* 나레이터 응답 대기 표시 */
+.typing-indicator p {
+    color: #cccccc;
+    font-style: italic;
+}
+
 .equipment-slots {
     display: grid;
     grid-template-columns: 1fr 1fr;

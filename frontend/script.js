@@ -44,6 +44,16 @@ const elements = {
     sellTabBtn: document.getElementById('sellTabBtn'),
     shopBuyList: document.getElementById('shopBuyList'),
     shopSellList: document.getElementById('shopSellList'),
+    restBtn: document.getElementById('restBtn'),
+    travelList: document.getElementById('travelList'),
+    questBoardBtn: document.getElementById('questBoardBtn'),
+    questModal: document.getElementById('questModal'),
+    closeQuestBtn: document.getElementById('closeQuestBtn'),
+    questActiveCount: document.getElementById('questActiveCount'),
+    questOfferList: document.getElementById('questOfferList'),
+    statsKills: document.getElementById('statsKills'),
+    statsDeaths: document.getElementById('statsDeaths'),
+    statsQuests: document.getElementById('statsQuests'),
     weaponSlotContent: document.getElementById('weaponSlotContent'),
     armorSlotContent: document.getElementById('armorSlotContent'),
     unequipWeaponBtn: document.getElementById('unequipWeaponBtn'),
@@ -225,6 +235,7 @@ async function submitAction() {
 
     addPlayerMessage(actionText);
     elements.actionInput.value = '';
+    showTyping();
 
     try {
         const response = await fetch(`${API_BASE_URL}/game/action`, {
@@ -235,6 +246,7 @@ async function submitAction() {
 
         if (!response.ok) {
             const error = await response.json();
+            hideTyping();
             addSystemMessage(`오류: ${error.detail}`);
             gameState.isLoading = false;
             elements.submitBtn.disabled = false;
@@ -245,6 +257,7 @@ async function submitAction() {
         const data = await response.json();
         currentPlayer = data.player;
 
+        hideTyping();
         addNarratorMessage(data.narrative);
 
         if (data.special_event) {
@@ -254,6 +267,7 @@ async function submitAction() {
         updateUI();
     } catch (error) {
         console.error('Error performing action:', error);
+        hideTyping();
         addSystemMessage('오류: ' + error.message);
     } finally {
         gameState.isLoading = false;
@@ -297,6 +311,14 @@ function updateUI() {
     elements.xpValue.textContent = `${currentPlayer.experience}/${expRequired}`;
     const xpPercent = Math.min(100, (currentPlayer.experience / expRequired) * 100);
     elements.xpBarFill.style.width = xpPercent + '%';
+
+    // 통계
+    elements.statsKills.textContent = currentPlayer.stats_kills ?? 0;
+    elements.statsDeaths.textContent = currentPlayer.stats_deaths ?? 0;
+    elements.statsQuests.textContent = currentPlayer.stats_quests_completed ?? 0;
+
+    // 여관 버튼은 마을에서만 표시
+    elements.restBtn.style.display = currentPlayer.location === '교차로 마을' ? 'block' : 'none';
 
     updateCombatPanel();
     updateEquipmentSlots();
@@ -368,6 +390,9 @@ async function combatAction(endpoint) {
         currentPlayer = data.player;
         data.logs.forEach(log => addEventMessage(log));
         updateUI();
+        if (data.combat_over) {
+            loadLocations();
+        }
     } catch (error) {
         console.error('Error in combat:', error);
         addSystemMessage('전투 오류: ' + error.message);
@@ -606,14 +631,166 @@ async function useItem(itemId) {
 }
 
 function updateQuests() {
-    if (currentPlayer.quest_log.length === 0) {
+    const quests = currentPlayer.active_quests || [];
+
+    if (quests.length === 0) {
         elements.questList.innerHTML = '<div class="empty-message">진행 중인 퀘스트가 없습니다</div>';
         return;
     }
 
-    elements.questList.innerHTML = currentPlayer.quest_log
-        .map(quest => `<div class="quest-item">${quest}</div>`)
-        .join('');
+    elements.questList.innerHTML = quests.map(q => `
+        <div class="quest-item">
+            ${q.title}
+            <div class="quest-progress">진행: ${q.progress}/${q.target_count} | 보상: ${q.reward_gold}골드, 경험치 ${q.reward_xp}</div>
+        </div>
+    `).join('');
+}
+
+// ===== 이동 시스템 =====
+
+async function loadLocations() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/locations`);
+        const data = await response.json();
+
+        elements.travelList.innerHTML = data.locations.map(loc => `
+            <div class="travel-item ${loc.current ? 'current' : ''}" ${loc.current ? '' : `data-travel="${loc.name}"`}>
+                <span class="travel-item-name">${loc.name}${loc.current ? ' (현재)' : ''}</span>
+                <span class="travel-item-level">Lv.${loc.min_level}-${loc.max_level}</span>
+            </div>
+        `).join('');
+
+        document.querySelectorAll('[data-travel]').forEach(el => {
+            el.addEventListener('click', () => travelTo(el.dataset.travel));
+        });
+    } catch (error) {
+        console.error('Error loading locations:', error);
+    }
+}
+
+async function travelTo(location) {
+    if (gameState.isLoading) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/travel?location=${encodeURIComponent(location)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addEventMessage(data.message);
+        updateUI();
+        loadLocations();
+    } catch (error) {
+        console.error('Error traveling:', error);
+        addSystemMessage('이동 오류: ' + error.message);
+    }
+}
+
+async function restAtInn() {
+    if (gameState.isLoading) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/rest`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addEventMessage(data.message);
+        updateUI();
+    } catch (error) {
+        console.error('Error resting:', error);
+        addSystemMessage('휴식 오류: ' + error.message);
+    }
+}
+
+// ===== 퀘스트 게시판 =====
+
+async function openQuestBoard() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/quest/available`);
+        const data = await response.json();
+
+        elements.questActiveCount.textContent = `${data.active_count}/${data.max_active}`;
+
+        if (data.offers.length === 0) {
+            elements.questOfferList.innerHTML = '<div class="empty-message">이 지역에는 의뢰가 없습니다</div>';
+        } else {
+            elements.questOfferList.innerHTML = data.offers.map(offer => `
+                <div class="shop-item">
+                    <div class="shop-item-info">
+                        <div class="shop-item-name">${offer.title}</div>
+                        <div class="shop-item-desc">보상: ${offer.reward_gold}골드, 경험치 ${offer.reward_xp}</div>
+                    </div>
+                    ${offer.already_active
+                        ? '<span class="shop-item-price">진행 중</span>'
+                        : `<button class="btn btn-small" data-accept-quest="${offer.id}">수락</button>`}
+                </div>
+            `).join('');
+
+            document.querySelectorAll('[data-accept-quest]').forEach(btn => {
+                btn.addEventListener('click', () => acceptQuest(btn.dataset.acceptQuest));
+            });
+        }
+
+        elements.questModal.classList.remove('hidden');
+    } catch (error) {
+        console.error('Error opening quest board:', error);
+        addSystemMessage('퀘스트 게시판을 여는데 실패했습니다.');
+    }
+}
+
+function closeQuestBoard() {
+    elements.questModal.classList.add('hidden');
+}
+
+async function acceptQuest(questId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/quest/accept?quest_id=${encodeURIComponent(questId)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addSystemMessage(data.message);
+        updateUI();
+        openQuestBoard();
+    } catch (error) {
+        console.error('Error accepting quest:', error);
+        addSystemMessage('퀘스트 수락 오류: ' + error.message);
+    }
+}
+
+// ===== 나레이터 응답 대기 표시 =====
+
+function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'message narrator typing-indicator';
+    div.id = 'typingIndicator';
+    const p = document.createElement('p');
+    p.textContent = '나레이터가 이야기를 쓰는 중...';
+    div.appendChild(p);
+    elements.chatMessages.appendChild(div);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function hideTyping() {
+    const el = document.getElementById('typingIndicator');
+    if (el) el.remove();
 }
 
 async function startNewGame() {
@@ -710,6 +887,13 @@ function setupEventListeners() {
     elements.huntBtn.addEventListener('click', startCombat);
     elements.attackBtn.addEventListener('click', () => combatAction('attack'));
     elements.fleeBtn.addEventListener('click', () => combatAction('flee'));
+    elements.restBtn.addEventListener('click', restAtInn);
+
+    elements.questBoardBtn.addEventListener('click', openQuestBoard);
+    elements.closeQuestBtn.addEventListener('click', closeQuestBoard);
+    elements.questModal.addEventListener('click', (e) => {
+        if (e.target === elements.questModal) closeQuestBoard();
+    });
 
     elements.shopBtn.addEventListener('click', openShop);
     elements.closeShopBtn.addEventListener('click', closeShop);
@@ -728,6 +912,7 @@ function setupEventListeners() {
 function initialize() {
     setupEventListeners();
     initializeGame();
+    loadLocations();
     elements.actionInput.focus();
 }
 

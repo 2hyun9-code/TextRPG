@@ -122,7 +122,8 @@ def create_item(item_id: str, quantity: int = 1) -> Item:
         description=data["description"],
         item_type=data["item_type"],
         effect=data["effect"],
-        quantity=quantity
+        quantity=quantity,
+        price=data["price"]
     )
 
 

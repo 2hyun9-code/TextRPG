@@ -26,6 +26,7 @@ class Item(BaseModel):
     item_type: ItemType
     effect: Dict[str, Any] = Field(default_factory=dict)
     quantity: int = 1
+    price: int = 0  # 동적 생성 아이템도 판매 가능하도록 가격 보유
 
 
 class Equipment(BaseModel):
@@ -43,6 +44,17 @@ class Enemy(BaseModel):
     defense: int
     xp_reward: int = 0
     gold_reward: int = 0
+
+
+class Quest(BaseModel):
+    id: str
+    title: str
+    target_enemy_id: str = ""       # 구버전 호환용
+    target_location: str = ""       # 동적 몬스터 대응: 지역 기반 처치 퀘스트
+    target_count: int
+    progress: int = 0
+    reward_gold: int = 0
+    reward_xp: int = 0
 
 
 class Inventory(BaseModel):
@@ -93,6 +105,10 @@ class PlayerState(BaseModel):
     recent_history: List[Dict[str, str]] = Field(default_factory=list)
     gold: int = 50
     current_enemy: Optional[Enemy] = None
+    active_quests: List[Quest] = Field(default_factory=list)
+    stats_kills: int = 0
+    stats_deaths: int = 0
+    stats_quests_completed: int = 0
 
     def add_history(self, role: str, content: str) -> None:
         """대화 기록 추가 (단기 기억)"""

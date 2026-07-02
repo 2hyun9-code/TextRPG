@@ -31,14 +31,7 @@ DROP_TABLES = {
 }
 
 
-def get_random_enemy(player_level: int) -> Enemy:
-    """플레이어 레벨에 맞는 적을 무작위로 선택"""
-    candidates = [t for t in ENEMY_TEMPLATES if abs(t["level"] - player_level) <= 2]
-    if not candidates:
-        # 범위 내 적이 없으면 가장 가까운 레벨의 적 선택
-        candidates = sorted(ENEMY_TEMPLATES, key=lambda t: abs(t["level"] - player_level))[:3]
-
-    template = random.choice(candidates)
+def _build_enemy(template: dict) -> Enemy:
 
     # 약간의 개체 편차 (90% ~ 110%)
     variance = random.uniform(0.9, 1.1)
@@ -54,6 +47,68 @@ def get_random_enemy(player_level: int) -> Enemy:
         defense=template["defense"],
         xp_reward=template["xp"],
         gold_reward=int(template["gold"] * random.uniform(0.8, 1.3)),
+    )
+
+
+def get_random_enemy(player_level: int) -> Enemy:
+    """플레이어 레벨에 맞는 적을 무작위로 선택"""
+    candidates = [t for t in ENEMY_TEMPLATES if abs(t["level"] - player_level) <= 2]
+    if not candidates:
+        candidates = sorted(ENEMY_TEMPLATES, key=lambda t: abs(t["level"] - player_level))[:3]
+    return _build_enemy(random.choice(candidates))
+
+
+def get_random_enemy_in_range(min_level: int, max_level: int) -> Enemy:
+    """지역 레벨 범위에 맞는 적을 무작위로 선택"""
+    candidates = [t for t in ENEMY_TEMPLATES if min_level <= t["level"] <= max_level]
+    if not candidates:
+        mid = (min_level + max_level) // 2
+        candidates = sorted(ENEMY_TEMPLATES, key=lambda t: abs(t["level"] - mid))[:2]
+    return _build_enemy(random.choice(candidates))
+
+
+def get_templates_in_range(min_level: int, max_level: int) -> list:
+    """지역 범위 내 적 템플릿 목록 (퀘스트 생성용)"""
+    return [t for t in ENEMY_TEMPLATES if min_level <= t["level"] <= max_level]
+
+
+# ===== 동적 몬스터 생성 (AI가 이름/묘사, 코드가 스탯) =====
+# 스탯 공식은 기존 템플릿 곡선에 맞춰 밸런스를 보장
+
+def stat_formula_hp(level: int) -> int:
+    return int(20 + (level ** 1.5) * 8)
+
+
+def stat_formula_attack(level: int) -> int:
+    return int(4 + 3.6 * level)
+
+
+def stat_formula_defense(level: int) -> int:
+    return int(1.55 * level)
+
+
+def stat_formula_xp(level: int) -> int:
+    return int(20 + 4.5 * level * level)
+
+
+def stat_formula_gold(level: int) -> int:
+    return int(stat_formula_xp(level) * (0.4 + level * 0.03))
+
+
+def build_dynamic_enemy(name: str, level: int) -> Enemy:
+    """AI가 창작한 이름으로 레벨에 맞는 밸런스의 적 생성"""
+    variance = random.uniform(0.9, 1.1)
+    hp = int(stat_formula_hp(level) * variance)
+    return Enemy(
+        id=f"dyn_lv{level}",
+        name=name,
+        level=level,
+        hp=hp,
+        max_hp=hp,
+        attack=int(stat_formula_attack(level) * variance),
+        defense=stat_formula_defense(level),
+        xp_reward=stat_formula_xp(level),
+        gold_reward=int(stat_formula_gold(level) * random.uniform(0.8, 1.2)),
     )
 
 
