@@ -14,11 +14,15 @@ const elements = {
     settingsBtn: document.getElementById('settingsBtn'),
     locationBadge: document.getElementById('locationBadge'),
     playerName: document.getElementById('playerName'),
+    playerJob: document.getElementById('playerJob'),
     playerLevel: document.getElementById('playerLevel'),
     hpValue: document.getElementById('hpValue'),
     hpBarFill: document.getElementById('hpBarFill'),
     playerAttack: document.getElementById('playerAttack'),
     playerDefense: document.getElementById('playerDefense'),
+    playerStrength: document.getElementById('playerStrength'),
+    playerDexterity: document.getElementById('playerDexterity'),
+    playerIntelligence: document.getElementById('playerIntelligence'),
     weaponSlotContent: document.getElementById('weaponSlotContent'),
     armorSlotContent: document.getElementById('armorSlotContent'),
     unequipWeaponBtn: document.getElementById('unequipWeaponBtn'),
@@ -26,6 +30,8 @@ const elements = {
     inventoryList: document.getElementById('inventoryList'),
     inventoryInfo: document.getElementById('inventoryInfo'),
     questList: document.getElementById('questList'),
+    jobModal: document.getElementById('jobModal'),
+    jobGrid: document.getElementById('jobGrid'),
     settingsModal: document.getElementById('settingsModal'),
     closeSettingsBtn: document.getElementById('closeSettingsBtn'),
     playerNameInput: document.getElementById('playerNameInput'),
@@ -40,11 +46,71 @@ async function initializeGame() {
         const response = await fetch(`${API_BASE_URL}/game/status`);
         const data = await response.json();
         currentPlayer = data.player;
-        addSystemMessage("게임이 로드되었습니다! 무엇을 하시겠습니까?");
-        updateUI();
+
+        if (!currentPlayer.job_selected) {
+            await showJobSelectionModal();
+        } else {
+            addSystemMessage("게임이 로드되었습니다! 무엇을 하시겠습니까?");
+            updateUI();
+        }
     } catch (error) {
         console.error('Error loading game:', error);
         addSystemMessage('게임 로드에 실패했습니다. 백엔드 서버가 포트 8000에서 실행 중인지 확인하세요.');
+    }
+}
+
+async function showJobSelectionModal() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/jobs`);
+        const data = await response.json();
+        const jobs = data.jobs;
+
+        let jobsHTML = '';
+        for (const [jobId, jobInfo] of Object.entries(jobs)) {
+            jobsHTML += `
+                <div class="job-card" onclick="selectJob('${jobId}')">
+                    <div class="job-card-name">${jobInfo.name}</div>
+                    <div class="job-card-description">${jobInfo.description}</div>
+                    <div class="job-card-stats">
+                        <div class="job-stat-row">
+                            <span class="job-stat-label">힘:</span>
+                            <span class="job-stat-value">${jobInfo.strength}</span>
+                        </div>
+                        <div class="job-stat-row">
+                            <span class="job-stat-label">민첩:</span>
+                            <span class="job-stat-value">${jobInfo.dexterity}</span>
+                        </div>
+                        <div class="job-stat-row">
+                            <span class="job-stat-label">지력:</span>
+                            <span class="job-stat-value">${jobInfo.intelligence}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        elements.jobGrid.innerHTML = jobsHTML;
+        elements.jobModal.classList.remove('hidden');
+    } catch (error) {
+        console.error('Error loading jobs:', error);
+        addSystemMessage('직업 선택을 불러오는데 실패했습니다.');
+    }
+}
+
+async function selectJob(jobId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/select-job?job=${jobId}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+        currentPlayer = data.player;
+
+        elements.jobModal.classList.add('hidden');
+        addSystemMessage(data.message);
+        addSystemMessage("이제 당신의 모험을 시작하세요!");
+        updateUI();
+    } catch (error) {
+        console.error('Error selecting job:', error);
+        addSystemMessage('직업 선택에 실패했습니다.');
     }
 }
 
@@ -144,6 +210,15 @@ function updateUI() {
     if (!currentPlayer) return;
 
     elements.playerName.textContent = currentPlayer.name;
+
+    const jobNames = {
+        "warrior": "전사",
+        "rogue": "도적",
+        "mage": "마법사",
+        "paladin": "성기사",
+        "ranger": "레인저"
+    };
+    elements.playerJob.textContent = jobNames[currentPlayer.job_class] || "미선택";
     elements.playerLevel.textContent = currentPlayer.level;
     elements.hpValue.textContent = `${currentPlayer.hp}/${currentPlayer.max_hp}`;
     elements.locationBadge.textContent = currentPlayer.location;
@@ -160,6 +235,10 @@ function updateUI() {
         ? currentPlayer.defense + (currentPlayer.equipment.armor.effect.defense_bonus || 0)
         : currentPlayer.defense;
     elements.playerDefense.textContent = effectiveDefense;
+
+    elements.playerStrength.textContent = currentPlayer.strength;
+    elements.playerDexterity.textContent = currentPlayer.dexterity;
+    elements.playerIntelligence.textContent = currentPlayer.intelligence;
 
     updateEquipmentSlots();
     updateInventory();
@@ -305,8 +384,13 @@ async function startNewGame() {
             const data = await response.json();
             currentPlayer = data.player;
             addSystemMessage(data.message);
-            updateUI();
-            elements.actionInput.focus();
+
+            if (!currentPlayer.job_selected) {
+                await showJobSelectionModal();
+            } else {
+                updateUI();
+                elements.actionInput.focus();
+            }
         } catch (error) {
             console.error('Error starting new game:', error);
             addSystemMessage('새 게임 시작 오류: ' + error.message);

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from models import (
     PlayerState, PlayerAction, Item, ItemType, Equipment, Inventory,
-    AIResponse, GameMessage
+    AIResponse, GameMessage, JobClass
 )
 from ollama_client import OllamaClient
 
@@ -82,11 +82,79 @@ async def get_game_status():
     }
 
 
+@app.get("/api/game/jobs")
+async def get_available_jobs():
+    jobs = {
+        "warrior": {
+            "name": "전사",
+            "description": "높은 힘과 방어력. 전투 최전선에 선다.",
+            "strength": 15,
+            "dexterity": 8,
+            "intelligence": 7
+        },
+        "rogue": {
+            "name": "도적",
+            "description": "빠른 민첩성과 치명타. 암살자의 길을 간다.",
+            "strength": 10,
+            "dexterity": 15,
+            "intelligence": 8
+        },
+        "mage": {
+            "name": "마법사",
+            "description": "강력한 마법. 지능으로 전투를 지배한다.",
+            "strength": 7,
+            "dexterity": 10,
+            "intelligence": 16
+        },
+        "paladin": {
+            "name": "성기사",
+            "description": "균형 잡힌 능력. 정의의 기사.",
+            "strength": 13,
+            "dexterity": 9,
+            "intelligence": 11
+        },
+        "ranger": {
+            "name": "레인저",
+            "description": "자연과 화살. 거리에서 싸우는 사냥꾼.",
+            "strength": 11,
+            "dexterity": 14,
+            "intelligence": 9
+        }
+    }
+    return {"jobs": jobs}
+
+
 @app.post("/api/game/new")
 async def new_game():
     player = create_new_game()
     save_player_state(player)
     return {"player": player.dict(), "message": "새 게임이 시작되었습니다!"}
+
+
+@app.post("/api/game/select-job")
+async def select_job(job: str):
+    player = load_player_state()
+
+    try:
+        job_class = JobClass(job)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="유효하지 않은 직업입니다")
+
+    player.set_job_class(job_class)
+    save_player_state(player)
+
+    job_names = {
+        "warrior": "전사",
+        "rogue": "도적",
+        "mage": "마법사",
+        "paladin": "성기사",
+        "ranger": "레인저"
+    }
+
+    return {
+        "message": f"{job_names.get(job, job)} 직업을 선택했습니다!",
+        "player": player.dict()
+    }
 
 
 @app.post("/api/game/action")

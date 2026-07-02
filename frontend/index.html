@@ -51,6 +51,10 @@
                             <span class="stat-value" id="playerName">모험가</span>
                         </div>
                         <div class="stat-row">
+                            <span class="stat-label">직업:</span>
+                            <span class="stat-value" id="playerJob">미선택</span>
+                        </div>
+                        <div class="stat-row">
                             <span class="stat-label">레벨:</span>
                             <span class="stat-value" id="playerLevel">1</span>
                         </div>
@@ -74,6 +78,21 @@
                         <div class="stat-row">
                             <span class="stat-label">방어:</span>
                             <span class="stat-value" id="playerDefense">5</span>
+                        </div>
+                    </div>
+
+                    <div class="stat-group">
+                        <div class="stat-row">
+                            <span class="stat-label">힘:</span>
+                            <span class="stat-value" id="playerStrength">10</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">민첩:</span>
+                            <span class="stat-value" id="playerDexterity">10</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">지력:</span>
+                            <span class="stat-value" id="playerIntelligence">10</span>
                         </div>
                     </div>
                 </div>
@@ -114,6 +133,21 @@
                     <div class="quest-list" id="questList">
                         <div class="empty-message">진행 중인 퀘스트가 없습니다</div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Selection Modal -->
+    <div id="jobModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>직업 선택</h2>
+            </div>
+            <div class="modal-body">
+                <p class="job-intro">당신의 모험을 시작할 직업을 선택하세요!</p>
+                <div class="job-grid" id="jobGrid">
+                    <!-- 직업 선택 카드가 여기에 동적으로 추가됨 -->
                 </div>
             </div>
         </div>
