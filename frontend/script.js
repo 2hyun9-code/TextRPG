@@ -158,8 +158,17 @@ async function selectJob(jobId) {
 
         elements.jobModal.classList.add('hidden');
         addSystemMessage(data.message);
-        addSystemMessage("이제 당신의 모험을 시작하세요!");
+
+        // 고정 프롤로그를 서사로 출력 (한 단락씩 시간차를 두고)
+        if (data.prologue && data.prologue.length > 0) {
+            for (const paragraph of data.prologue) {
+                addNarratorMessage(paragraph);
+                await new Promise(resolve => setTimeout(resolve, 800));
+            }
+        }
+
         updateUI();
+        elements.actionInput.focus();
     } catch (error) {
         console.error('Error selecting job:', error);
         addSystemMessage('직업 선택에 실패했습니다.');

@@ -12,6 +12,7 @@ from models import (
 )
 from ollama_client import OllamaClient
 from items_db import ITEMS_DB, SHOP_STOCK, create_item, get_item_price
+from story import get_prologue, get_seed_summary, JOB_NAMES
 from enemies_db import (
     ENEMY_TEMPLATES, get_random_enemy_in_range, get_templates_in_range, roll_drop,
     build_dynamic_enemy, stat_formula_xp, stat_formula_gold
@@ -206,18 +207,19 @@ async def select_job(job: str):
         raise HTTPException(status_code=400, detail="유효하지 않은 직업입니다")
 
     player.set_job_class(job_class)
+
+    # 고정 프롤로그: AI의 초기 기억에 서장을 심는다.
+    # 나레이터는 이 전제에서 이야기를 시작하고, 이후 플레이어의
+    # 선택이 요약에 병합되며 매번 다른 이야기로 갈라진다.
+    prologue = get_prologue(job)
+    player.story_summary = get_seed_summary(player.name, job)
+    player.add_history("나레이터", prologue[2])  # 촌장의 부탁 장면을 단기 기억에도 기록
+
     save_player_state(player)
 
-    job_names = {
-        "warrior": "전사",
-        "rogue": "도적",
-        "mage": "마법사",
-        "paladin": "성기사",
-        "ranger": "레인저"
-    }
-
     return {
-        "message": f"{job_names.get(job, job)} 직업을 선택했습니다!",
+        "message": f"{JOB_NAMES.get(job, job)} 직업을 선택했습니다!",
+        "prologue": prologue,
         "player": player.dict()
     }
 
