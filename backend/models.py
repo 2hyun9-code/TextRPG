@@ -87,7 +87,20 @@ class PlayerState(BaseModel):
         self.hp = min(self.max_hp, self.hp + amount)
 
     def get_effective_attack(self) -> int:
-        base_attack = self.attack + (self.strength // 2)
+        ability_bonus = 0
+
+        if self.job_class == JobClass.WARRIOR:
+            ability_bonus = self.strength // 2
+        elif self.job_class == JobClass.ROGUE:
+            ability_bonus = self.dexterity // 2
+        elif self.job_class == JobClass.MAGE:
+            ability_bonus = self.intelligence // 2
+        elif self.job_class == JobClass.PALADIN:
+            ability_bonus = (self.strength + self.dexterity + self.intelligence) // 9
+        elif self.job_class == JobClass.RANGER:
+            ability_bonus = (self.strength + self.dexterity) // 4
+
+        base_attack = self.attack + ability_bonus
         if self.equipment.weapon:
             base_attack += self.equipment.weapon.effect.get("attack_bonus", 0)
         return base_attack
