@@ -3,7 +3,8 @@ const API_BASE_URL = 'http://localhost:8000/api';
 let currentPlayer = null;
 let gameState = {
     isLoading: false,
-    messageHistory: []
+    messageHistory: [],
+    storyArchive: []
 };
 
 const elements = {
@@ -126,6 +127,51 @@ function addMessage(role, content, type = 'narrative') {
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
 
     gameState.messageHistory.push({ role, content, type });
+
+    // 메시지가 500개 도달하면 요약 실행
+    if (gameState.messageHistory.length === 500) {
+        summarizeStory();
+    }
+    // 메시지가 500개 이상이면 가장 오래된 것부터 삭제 (최대 500개 유지)
+    else if (gameState.messageHistory.length > 500) {
+        gameState.messageHistory.shift();
+        const firstMessage = elements.chatMessages.firstChild;
+        if (firstMessage) {
+            firstMessage.remove();
+        }
+    }
+}
+
+async function summarizeStory() {
+    addSystemMessage("요약 중...");
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/summarize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gameState.messageHistory)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            addSystemMessage("저장 완료");
+        } else {
+            addSystemMessage(`오류: ${data.message}`);
+        }
+
+        // 요약 후 가장 오래된 메시지들 제거 (250개만 유지)
+        while (gameState.messageHistory.length > 250) {
+            gameState.messageHistory.shift();
+            const firstMessage = elements.chatMessages.firstChild;
+            if (firstMessage) {
+                firstMessage.remove();
+            }
+        }
+    } catch (error) {
+        console.error('Error summarizing story:', error);
+        addSystemMessage('요약 생성 중 오류가 발생했습니다.');
+    }
 }
 
 function addSystemMessage(content) {

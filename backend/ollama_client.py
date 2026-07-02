@@ -20,8 +20,12 @@ class OllamaClient:
         special_items = [item.name for item in player_state.inventory.items if item.item_type.value == "special"]
         special_info = f"특수 아이템: {', '.join(special_items)}" if special_items else "특수 아이템 없음"
 
-        return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level}입니다.
+        story_context = ""
+        if player_state.story_summary:
+            story_context = f"\n이전 이야기 요약:\n{player_state.story_summary}\n"
 
+        return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level}입니다.
+{story_context}
 현재 상태:
 - 체력: {player_state.hp}/{player_state.max_hp}
 - 공격: {player_state.get_effective_attack()}
@@ -66,6 +70,38 @@ class OllamaClient:
             return result.get("response", "공기가 고요해진다...").strip()
         except Exception as e:
             return f"[나레이터의 목소리가 희미해진다... 연결 오류: {str(e)}]"
+
+    async def summarize_messages(self, messages: list) -> str:
+        if not messages:
+            return ""
+
+        message_text = "\n".join([
+            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for msg in messages[-50:]
+        ])
+
+        prompt = f"""다음은 게임 진행 중 지난 이야기의 일부입니다. 이 내용을 2-3 문장으로 요약해주세요.
+지금까지의 주요 사건과 플레이어의 상황을 포함해서요.
+
+이야기:
+{message_text}
+
+요약:"""
+
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("response", "").strip()
+        except Exception:
+            return "이전 이야기 요약을 불러올 수 없습니다."
 
     async def generate_special_event(self, player_state: PlayerState) -> Optional[str]:
         if not player_state.inventory.has_item("map"):

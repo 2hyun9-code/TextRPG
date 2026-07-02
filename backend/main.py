@@ -13,6 +13,16 @@ from ollama_client import OllamaClient
 
 app = FastAPI(title="Text RPG")
 
+
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -155,6 +165,26 @@ async def select_job(job: str):
         "message": f"{job_names.get(job, job)} 직업을 선택했습니다!",
         "player": player.dict()
     }
+
+
+@app.post("/api/game/summarize")
+async def summarize_story(messages: list):
+    player = load_player_state()
+
+    try:
+        summary = await ollama.summarize_messages(messages)
+        player.story_summary = summary
+        save_player_state(player)
+
+        return {
+            "success": True,
+            "message": "저장 완료"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"오류: {str(e)}"
+        }
 
 
 @app.post("/api/game/action")

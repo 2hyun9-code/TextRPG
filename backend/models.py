@@ -77,6 +77,7 @@ class PlayerState(BaseModel):
     location: str = "교차로 마을"
     quest_log: List[str] = Field(default_factory=list)
     job_selected: bool = False
+    story_summary: str = ""
 
     def take_damage(self, damage: int) -> int:
         actual_damage = max(1, damage - self.defense)
