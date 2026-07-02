@@ -8,7 +8,7 @@ from models import PlayerState, AIResponse
 class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
         self.base_url = base_url
-        self.model = "gemma2:2b"
+        self.model = "llama2-uncensored"  # gemma2:2b보다 한국어 생성 성능 우수
         self.client = httpx.AsyncClient(timeout=60.0)
 
     async def close(self):
@@ -174,16 +174,21 @@ class OllamaClient:
         except Exception:
             return None
 
-    async def generate_enemy_concept(self, player_state: PlayerState) -> Optional[dict]:
+    async def generate_enemy_concept(self, player_state: PlayerState, boss: bool = False) -> Optional[dict]:
         """현재 이야기 맥락에 어울리는 독창적 몬스터를 AI가 창작"""
         story = player_state.story_summary or "모험이 막 시작되었다."
+
+        if boss:
+            role = "이 지역에 군림하는 위압적이고 강력한 보스 몬스터"
+        else:
+            role = "독창적인 몬스터"
 
         prompt = f"""당신은 텍스트 RPG의 몬스터 디자이너입니다.
 
 장소: {player_state.location}
 이야기 맥락: {story}
 
-이 장소와 이야기에 어울리는 독창적인 몬스터 하나를 한국어로 창작하세요.
+이 장소와 이야기에 어울리는 {role} 하나를 한국어로 창작하세요.
 유명 게임의 몬스터를 그대로 복사하지 말고 새로운 존재를 만드세요.
 
 반드시 이 JSON 형식으로만 답하세요:

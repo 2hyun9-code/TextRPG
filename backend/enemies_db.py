@@ -95,20 +95,30 @@ def stat_formula_gold(level: int) -> int:
     return int(stat_formula_xp(level) * (0.4 + level * 0.03))
 
 
-def build_dynamic_enemy(name: str, level: int) -> Enemy:
-    """AI가 창작한 이름으로 레벨에 맞는 밸런스의 적 생성"""
+def build_dynamic_enemy(name: str, level: int, boss: bool = False) -> Enemy:
+    """AI가 창작한 이름으로 레벨에 맞는 밸런스의 적 생성
+
+    보스: 체력 1.8배, 공격 1.2배, 방어 +2 - 강하지만 물약을 쓰면 깰 수 있는 수준.
+    보상은 3배 (경험치/골드).
+    """
     variance = random.uniform(0.9, 1.1)
-    hp = int(stat_formula_hp(level) * variance)
+
+    hp_mult = 1.8 if boss else 1.0
+    atk_mult = 1.2 if boss else 1.0
+    def_bonus = 2 if boss else 0
+    reward_mult = 3 if boss else 1
+
+    hp = int(stat_formula_hp(level) * variance * hp_mult)
     return Enemy(
-        id=f"dyn_lv{level}",
+        id=f"boss_lv{level}" if boss else f"dyn_lv{level}",
         name=name,
         level=level,
         hp=hp,
         max_hp=hp,
-        attack=int(stat_formula_attack(level) * variance),
-        defense=stat_formula_defense(level),
-        xp_reward=stat_formula_xp(level),
-        gold_reward=int(stat_formula_gold(level) * random.uniform(0.8, 1.2)),
+        attack=int(stat_formula_attack(level) * variance * atk_mult),
+        defense=stat_formula_defense(level) + def_bonus,
+        xp_reward=stat_formula_xp(level) * reward_mult,
+        gold_reward=int(stat_formula_gold(level) * random.uniform(0.8, 1.2)) * reward_mult,
     )
 
 

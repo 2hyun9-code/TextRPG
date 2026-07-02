@@ -665,7 +665,7 @@ async function loadLocations() {
         elements.travelList.innerHTML = data.locations.map(loc => `
             <div class="travel-item ${loc.current ? 'current' : ''}" ${loc.current ? '' : `data-travel="${loc.name}"`}>
                 <span class="travel-item-name">${loc.name}${loc.current ? ' (현재)' : ''}</span>
-                <span class="travel-item-level">Lv.${loc.min_level}-${loc.max_level}</span>
+                <span class="travel-item-level">${loc.description}</span>
             </div>
         `).join('');
 

@@ -22,16 +22,23 @@ import uuid
 # AI 동적 생성 on/off (테스트 시 0으로 설정해 LLM 호출 생략)
 USE_AI_GENERATION = os.getenv("TEXTRPG_AI_GEN", "1") != "0"
 
-# 지역 정의: 이름 -> (설명, 적 레벨 범위, 휴식 가능 여부)
+# 지역 정의: 이야기 배경 역할 (적 강함은 지역이 아닌 플레이어 레벨에 맞춰 결정됨)
 LOCATIONS = {
-    "교차로 마을": {"description": "모험의 시작점. 여관에서 쉴 수 있다.", "min_level": 1, "max_level": 2, "can_rest": True},
-    "어두운 숲": {"description": "그림자가 짙게 드리운 숲.", "min_level": 2, "max_level": 5, "can_rest": False},
-    "버려진 광산": {"description": "괴물이 자리 잡은 오래된 광산.", "min_level": 5, "max_level": 8, "can_rest": False},
-    "고대 유적": {"description": "잊혀진 문명의 폐허.", "min_level": 8, "max_level": 12, "can_rest": False},
-    "용의 둥지": {"description": "가장 위험한 자들만 발을 들이는 곳.", "min_level": 11, "max_level": 15, "can_rest": False},
+    "교차로 마을": {"description": "모험의 시작점. 여관에서 쉴 수 있다.", "can_rest": True},
+    "어두운 숲": {"description": "그림자가 짙게 드리운 숲.", "can_rest": False},
+    "버려진 광산": {"description": "괴물이 자리 잡은 오래된 광산.", "can_rest": False},
+    "고대 유적": {"description": "잊혀진 문명의 폐허.", "can_rest": False},
+    "용의 둥지": {"description": "가장 위험한 자들만 발을 들이는 곳.", "can_rest": False},
 }
 
 MAX_ACTIVE_QUESTS = 3
+
+# 적 레벨 = 플레이어 레벨 기준 이 범위 내에서 결정
+ENEMY_LEVEL_MIN_OFFSET = -1
+ENEMY_LEVEL_MAX_OFFSET = 2
+
+BOSS_CHANCE = 0.10        # 사냥 시 보스 조우 확률
+BOSS_LEVEL_OFFSET = 2     # 보스 레벨 = 플레이어 레벨 + 2
 
 app = FastAPI(title="Text RPG")
 
@@ -280,8 +287,6 @@ async def get_locations():
         locations.append({
             "name": name,
             "description": info["description"],
-            "min_level": info["min_level"],
-            "max_level": info["max_level"],
             "can_rest": info["can_rest"],
             "current": name == player.location
         })
@@ -335,17 +340,15 @@ async def rest_at_inn():
     }
 
 
-def _quest_offer_for(location: str, count: int) -> dict:
-    """지역 기반 처치 퀘스트 정의 (동적 몬스터도 카운트됨)"""
-    loc = LOCATIONS[location]
-    avg_level = (loc["min_level"] + loc["max_level"]) // 2
+def _quest_offer_for(location: str, count: int, player_level: int) -> dict:
+    """지역 기반 처치 퀘스트 정의 (보상은 플레이어 레벨에 비례)"""
     return {
         "id": f"ql_{location}_{count}",
         "title": f"{location} 소탕: 몬스터 {count}마리 처치",
         "target_location": location,
         "target_count": count,
-        "reward_gold": int(stat_formula_gold(avg_level) * count * 0.6),
-        "reward_xp": int(stat_formula_xp(avg_level) * count * 0.4),
+        "reward_gold": int(stat_formula_gold(player_level) * count * 0.6),
+        "reward_xp": int(stat_formula_xp(player_level) * count * 0.4),
     }
 
 
@@ -360,7 +363,7 @@ async def quest_available():
 
     offers = []
     for count in (3, 5, 8):
-        offer = _quest_offer_for(player.location, count)
+        offer = _quest_offer_for(player.location, count, player.level)
         offer["already_active"] = player.location in active_locations
         offers.append(offer)
 
@@ -395,7 +398,7 @@ async def quest_accept(quest_id: str):
     if any(q.target_location == location for q in player.active_quests):
         raise HTTPException(status_code=400, detail="이미 이 지역의 퀘스트를 진행 중입니다")
 
-    offer = _quest_offer_for(location, count)
+    offer = _quest_offer_for(location, count, player.level)
     quest = Quest(
         id=offer["id"],
         title=offer["title"],
@@ -446,24 +449,38 @@ async def start_combat():
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="이미 전투 중입니다")
 
-    loc = LOCATIONS.get(player.location, {"min_level": 1, "max_level": 3})
     logs = []
+    is_boss = random.random() < BOSS_CHANCE
+
+    # 적 레벨은 항상 플레이어 레벨 기준 범위 내에서 결정
+    if is_boss:
+        level = player.level + BOSS_LEVEL_OFFSET
+    else:
+        level = max(1, player.level + random.randint(ENEMY_LEVEL_MIN_OFFSET, ENEMY_LEVEL_MAX_OFFSET))
 
     # AI가 이야기 맥락에 맞는 몬스터를 창작 (스탯은 코드가 밸런스 보장)
     concept = None
     if USE_AI_GENERATION:
-        concept = await ollama.generate_enemy_concept(player)
+        concept = await ollama.generate_enemy_concept(player, boss=is_boss)
 
     if concept:
-        level = random.randint(loc["min_level"], loc["max_level"])
-        enemy = build_dynamic_enemy(concept["name"], level)
-        logs.append(f"{enemy.name}(레벨 {enemy.level})이(가) 나타났다!")
-        if concept.get("description"):
-            logs.append(concept["description"])
+        name = concept["name"]
+        description = concept.get("description", "")
     else:
-        # AI 실패 시 고전 몬스터 폴백
-        enemy = get_random_enemy_in_range(loc["min_level"], loc["max_level"])
+        # AI 실패 시 폴백 이름
+        name = "이름 없는 공포" if is_boss else get_random_enemy_in_range(max(1, level - 1), level + 1).name
+        description = ""
+
+    enemy = build_dynamic_enemy(name, level, boss=is_boss)
+
+    if is_boss:
+        logs.append(f"[보스] {enemy.name}(레벨 {enemy.level})이(가) 나타났다!")
+        logs.append("압도적인 존재감이 주변을 짓누른다.")
+    else:
         logs.append(f"{enemy.name}(레벨 {enemy.level})이(가) 나타났다!")
+
+    if description:
+        logs.append(description)
 
     player.current_enemy = enemy
     save_player_state(player)
@@ -482,22 +499,25 @@ def _potion_for_level(level: int) -> str:
     return "small_potion"
 
 
-async def _roll_dynamic_drop(player: PlayerState, enemy) -> Optional[Item]:
-    """동적 몬스터의 전리품: 물약(고정 DB) 또는 AI 창작 장비(코드 스탯)"""
+async def _roll_dynamic_drop(player: PlayerState, enemy, guaranteed: bool = False) -> Optional[Item]:
+    """동적 몬스터의 전리품: 물약(고정 DB) 또는 AI 창작 장비(코드 스탯)
+
+    guaranteed=True (보스): 반드시 장비 드롭 + 능력치 한 단계 상승
+    """
     roll = random.random()
 
-    if roll < 0.30:
+    if not guaranteed and roll < 0.30:
         # 물약 드롭
         return create_item(_potion_for_level(enemy.level))
 
-    if roll < 0.45:
+    if guaranteed or roll < 0.45:
         # AI 창작 장비 드롭
         kind = random.choice(["weapon", "armor"])
         concept = None
         if USE_AI_GENERATION:
             concept = await ollama.generate_item_concept(player, kind)
 
-        level = enemy.level
+        level = enemy.level + (2 if guaranteed else 0)
         if kind == "weapon":
             bonus = max(2, int(level * 1.1) + random.randint(-1, 2))
             effect = {"attack_bonus": bonus}
@@ -551,8 +571,10 @@ async def combat_attack():
         player.gold += enemy.gold_reward
         logs.append(f"{enemy.name}을(를) 물리쳤다! 경험치 +{enemy.xp_reward}, 골드 +{enemy.gold_reward}")
 
-        # 전리품: 동적 몬스터는 AI 창작 장비/물약, 고전 몬스터는 드롭 테이블
-        if enemy.id.startswith("dyn_"):
+        # 전리품: 보스는 확정 장비, 동적 몬스터는 AI 창작 장비/물약, 고전 몬스터는 드롭 테이블
+        if enemy.id.startswith("boss_"):
+            drop_item = await _roll_dynamic_drop(player, enemy, guaranteed=True)
+        elif enemy.id.startswith("dyn_"):
             drop_item = await _roll_dynamic_drop(player, enemy)
         else:
             drop_id = roll_drop(enemy.id)
