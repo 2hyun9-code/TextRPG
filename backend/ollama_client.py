@@ -1,18 +1,38 @@
 import httpx
 import json
+import logging
+import os
 import re
-from typing import Optional
+from typing import AsyncGenerator, Optional
 from models import PlayerState, AIResponse
+
+logger = logging.getLogger("textrpg.ollama")
 
 
 class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
-        self.base_url = base_url
-        self.model = "llama2-uncensored"  # gemma2:2b보다 한국어 생성 성능 우수
+        # 환경변수로 코드 수정 없이 변경 가능:
+        #   OLLAMA_URL=http://다른서버:11434 OLLAMA_MODEL=llama2-uncensored python run.py
+        self.base_url = os.getenv("OLLAMA_URL", base_url)
+        self.model = os.getenv("OLLAMA_MODEL", "gemma2:2b")
         self.client = httpx.AsyncClient(timeout=60.0)
 
     async def close(self):
         await self.client.aclose()
+
+    async def warmup(self) -> None:
+        """서버 시작 시 모델을 미리 메모리에 로드해 첫 요청 지연을 없앤다."""
+        try:
+            await self.client.post(
+                f"{self.base_url}/api/generate",
+                json={"model": self.model, "prompt": "안녕", "stream": False},
+                timeout=60.0
+            )
+            logger.info("Ollama 모델 프리워밍 완료: %s", self.model)
+        except httpx.ConnectError:
+            logger.warning("Ollama 서버에 연결할 수 없습니다. 프리워밍을 건너뜁니다.")
+        except Exception as e:
+            logger.warning("프리워밍 실패 (게임은 계속 진행됩니다): %s", e)
 
     def _build_system_prompt(self, player_state: PlayerState) -> str:
         weapon_info = f"장착된 무기: {player_state.equipment.weapon.name} (+{player_state.equipment.weapon.effect.get('attack_bonus', 0)} 공격)" if player_state.equipment.weapon else "장착된 무기 없음"
@@ -77,15 +97,17 @@ class OllamaClient:
         ]
         return "\n최근 대화:\n" + "\n".join(lines) + "\n"
 
-    async def generate_narrative(self, player_state: PlayerState, player_action: str) -> str:
+    def _build_action_prompt(self, player_state: PlayerState, player_action: str) -> str:
         system_prompt = self._build_system_prompt(player_state)
         history_text = self._format_recent_history(player_state)
-
-        prompt = f"""{system_prompt}
+        return f"""{system_prompt}
 {history_text}
 플레이어 행동: {player_action}
 
 나레이터 응답:"""
+
+    async def generate_narrative(self, player_state: PlayerState, player_action: str) -> str:
+        prompt = self._build_action_prompt(player_state, player_action)
 
         try:
             response = await self.client.post(
@@ -94,13 +116,69 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                }
+                },
+                timeout=30.0
             )
             response.raise_for_status()
             result = response.json()
             return result.get("response", "공기가 고요해진다...").strip()
+        except httpx.TimeoutException:
+            logger.warning("나레이터 응답 시간 초과")
+            return "[나레이터가 생각에 잠겨 말이 없다... 잠시 후 다시 시도해주세요]"
+        except httpx.ConnectError:
+            logger.error("Ollama 서버 연결 실패")
+            return "[나레이터가 자리를 비웠다... Ollama가 실행 중인지 확인해주세요]"
+        except httpx.HTTPStatusError as e:
+            logger.error("Ollama HTTP 오류: %s", e)
+            return "[나레이터가 말을 잇지 못한다... 잠시 후 다시 시도해주세요]"
         except Exception as e:
-            return f"[나레이터의 목소리가 희미해진다... 연결 오류: {str(e)}]"
+            logger.error("나레이터 생성 중 알 수 없는 오류: %s", e)
+            return "[나레이터의 목소리가 희미해진다... 다시 시도해주세요]"
+
+    async def generate_narrative_stream(
+        self, player_state: PlayerState, player_action: str
+    ) -> AsyncGenerator[str, None]:
+        """토큰이 생성되는 대로 즉시 흘려보낸다 (체감 응답 속도 개선)"""
+        prompt = self._build_action_prompt(player_state, player_action)
+
+        try:
+            async with self.client.stream(
+                "POST",
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": True,
+                },
+                timeout=30.0
+            ) as response:
+                response.raise_for_status()
+                got_any = False
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    chunk = data.get("response", "")
+                    if chunk:
+                        got_any = True
+                        yield chunk
+                if not got_any:
+                    yield "공기가 고요해진다..."
+        except httpx.TimeoutException:
+            logger.warning("나레이터 스트리밍 응답 시간 초과")
+            yield "[나레이터가 생각에 잠겨 말이 없다... 잠시 후 다시 시도해주세요]"
+        except httpx.ConnectError:
+            logger.error("Ollama 서버 연결 실패 (스트리밍)")
+            yield "[나레이터가 자리를 비웠다... Ollama가 실행 중인지 확인해주세요]"
+        except httpx.HTTPStatusError as e:
+            logger.error("Ollama HTTP 오류 (스트리밍): %s", e)
+            yield "[나레이터가 말을 잇지 못한다... 잠시 후 다시 시도해주세요]"
+        except Exception as e:
+            logger.error("나레이터 스트리밍 중 알 수 없는 오류: %s", e)
+            yield "[나레이터의 목소리가 희미해진다... 다시 시도해주세요]"
 
     async def update_summary(self, old_summary: str, messages: list) -> str:
         """증분 요약: 기존 요약과 새로운 사건을 병합해 갱신 (중기 기억)
@@ -148,7 +226,14 @@ class OllamaClient:
             new_summary = result.get("response", "").strip()
             # 요약 생성 실패 시 기존 요약 유지 (기억 손실 방지)
             return new_summary if new_summary else old_summary
-        except Exception:
+        except httpx.TimeoutException:
+            logger.warning("요약 생성 시간 초과 - 기존 요약 유지")
+            return old_summary
+        except httpx.ConnectError:
+            logger.error("Ollama 서버 연결 실패 (요약) - 기존 요약 유지")
+            return old_summary
+        except Exception as e:
+            logger.error("요약 생성 중 오류: %s - 기존 요약 유지", e)
             return old_summary
 
     async def _generate_json(self, prompt: str, timeout: float = 30.0) -> Optional[dict]:
@@ -171,7 +256,17 @@ class OllamaClient:
             if match:
                 return json.loads(match.group())
             return None
-        except Exception:
+        except httpx.TimeoutException:
+            logger.warning("JSON 생성 시간 초과")
+            return None
+        except httpx.ConnectError:
+            logger.error("Ollama 서버 연결 실패 (JSON 생성)")
+            return None
+        except json.JSONDecodeError:
+            logger.warning("JSON 파싱 실패 - 모델 응답 형식이 올바르지 않음")
+            return None
+        except Exception as e:
+            logger.error("JSON 생성 중 알 수 없는 오류: %s", e)
             return None
 
     async def generate_enemy_concept(self, player_state: PlayerState, boss: bool = False) -> Optional[dict]:
@@ -258,5 +353,12 @@ class OllamaClient:
             result = response.json()
             quest = result.get("response", "").strip()
             return f"[새로운 퀘스트] {quest}" if quest else None
-        except Exception:
+        except httpx.TimeoutException:
+            logger.warning("특수 이벤트 생성 시간 초과")
+            return None
+        except httpx.ConnectError:
+            logger.error("Ollama 서버 연결 실패 (특수 이벤트)")
+            return None
+        except Exception as e:
+            logger.error("특수 이벤트 생성 중 오류: %s", e)
             return None

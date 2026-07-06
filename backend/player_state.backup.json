@@ -52,7 +52,7 @@
     "weapon": null,
     "armor": null
   },
-  "location": "어두운 숲",
+  "location": "교차로 마을",
   "quest_log": [],
   "job_selected": true,
   "story_summary": "[서장] 성기사 모험가은(는) 몬스터들이 흉포해지고 사냥꾼들이 실종되는 이변에 시달리는 교차로 마을에 도착했다. 촌장 브란의 부탁으로 어두운 숲 깊은 곳에 있다는 이변의 근원을 조사하기로 했다. 아직 이변의 정체는 아무도 모른다.",
@@ -60,22 +60,6 @@
     {
       "role": "나레이터",
       "content": "촌장 브란은 마을에 도착한 당신을 조용히 불러 말했다. \"소문에 의하면 이 모든 이변은 어두운 숲 깊은 곳에서 시작됐다고 하네. 부탁이네, 이변의 근원을 찾아 주게. 마을이 버틸 수 있는 시간이 얼마 남지 않았어.\""
-    },
-    {
-      "role": "시스템",
-      "content": "어두운 숲(으)로 이동했다."
-    },
-    {
-      "role": "플레이어",
-      "content": "주변을 살펴본다"
-    },
-    {
-      "role": "나레이터",
-      "content": "숲속의 그림자 속에서 당신은 눈을 감는 것을 선택하지 않아도 압도적인 무거움을 느낀다는 것은 분명했습니다. 어두운 먼지가 쌓인 나무 사이를 한껏 따라갈 때마다 시선이 당신을 주목하고 다양한 조짐의 모습이 그룹에 대한 이야기를 불러 일으키고 있었지만, 지나간 시간 동안 이는 사실일 수밖에 없었습니다.  낡은 지도를 쥐며 숲 전체를 따라가며 어둠 속에서 당신을 관찰하고 있습니다.\n\n... (플레이어의 행동 선택과 관련된 지역 변화)"
-    },
-    {
-      "role": "시스템",
-      "content": "[새로운 퀘스트] The rustling leaves whisper of a strange sound, a low hum that seems to vibrate the air itself.  A single, glowing mushroom sits on the path ahead, its luminescence seemingly calling you towards it... but is it safe?"
     }
   ],
   "gold": 50,

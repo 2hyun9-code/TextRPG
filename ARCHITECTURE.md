@@ -1,306 +1,121 @@
-# Text RPG Architecture Overview
+# 시스템 구조
 
-## System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    WEB BROWSER                              │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Frontend (HTML/CSS/JavaScript)             │   │
-│  │                                                      │   │
-│  │  ┌─────────────────────┐  ┌─────────────────────┐  │   │
-│  │  │   Chat Interface    │  │  Inventory & Stats  │  │   │
-│  │  │   - Narrative       │  │  - Equipment slots  │  │   │
-│  │  │   - Actions input   │  │  - Item list        │  │   │
-│  │  │   - Event messages  │  │  - Quest log        │  │   │
-│  │  └─────────────────────┘  └─────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                         ↕  HTTP REST API                    │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│              Backend (Python FastAPI)                       │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           FastAPI Application                        │   │
-│  │                                                      │   │
-│  │  Endpoints:                                         │   │
-│  │  - /api/game/status        → Get current state     │   │
-│  │  - /api/game/new           → Start new game        │   │
-│  │  - /api/game/action        → Process player action │   │
-│  │  - /api/inventory/*        → Manage inventory      │   │
-│  │  - /api/player/*           → Update player info    │   │
-│  │                                                      │   │
-│  └────────┬─────────────────────────────────────────────┘   │
-│           ↓                                                   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Game Logic & State                         │   │
-│  │                                                      │   │
-│  │  - PlayerState         (HP, attack, level, etc)     │   │
-│  │  - Inventory System    (items with effects)         │   │
-│  │  - Equipment System    (weapons, armor)             │   │
-│  │  - Game Rules          (damage, healing, XP)        │   │
-│  │                                                      │   │
-│  └────────┬─────────────────────────────────────────────┘   │
-│           ↓                                                   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Ollama AI Integration                      │   │
-│  │                                                      │   │
-│  │  - Generate narrative responses                     │   │
-│  │  - Create random quests (if map item owned)         │   │
-│  │  - Context-aware storytelling                       │   │
-│  │                                                      │   │
-│  └────────┬─────────────────────────────────────────────┘   │
-│           ↓                                                   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Persistent Storage                         │   │
-│  │                                                      │   │
-│  │  - player_state.json    (Game save file)            │   │
-│  │                                                      │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                         ↕  HTTP API                          │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│              Ollama (Local LLM)                              │
-│                                                              │
-│  Model: llama2                                              │
-│  Purpose: Generate AI narratives and quest descriptions    │
-│  Runs locally on port 11434                                 │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Key Components
-
-### Frontend (`frontend/`)
-
-#### `index.html`
-- **Purpose**: Game interface structure
-- **Key Elements**:
-  - Left panel: Chat/narrative window with message history
-  - Right panel: Player stats, equipment, inventory, quests
-  - Header: Game title, New Game, Settings buttons
-  - Settings modal: Player name and Ollama configuration
-
-#### `style.css`
-- **Dark theme** with accent colors (#e74c3c red for actions)
-- **Responsive layout** - adapts to smaller screens
-- **Animations** - smooth message sliding, HP bar transitions
-- **Sections**: Chat, Stats, Equipment slots, Inventory, Quests
-- **Custom scrollbars** - themed to match dark aesthetic
-
-#### `script.js`
-- **API Communication**: Fetch requests to backend
-- **UI Management**: Update player stats, inventory display
-- **Event Handling**: Action submission, equipment management
-- **Local State**: Message history, loading states
-- **Key Functions**:
-  - `submitAction()` - Send action to backend
-  - `updateUI()` - Refresh all visual elements
-  - `equipItem() / unequipItem() / useItem()` - Inventory management
-
-### Backend (`backend/`)
-
-#### `main.py`
-- **Framework**: FastAPI with CORS middleware
-- **Core Endpoints**:
-  - `GET /api/game/status` - Load current game
-  - `POST /api/game/new` - Initialize new game
-  - `POST /api/game/action` - Process player action
-  - `POST /api/inventory/*` - Equip/unequip/use items
-  - `POST /api/player/*` - Update player attributes
-- **Features**:
-  - CORS enabled for frontend communication
-  - Static file serving for frontend
-  - Auto-save to `player_state.json`
-
-#### `models.py`
-- **Data Models** (Pydantic):
-  ```
-  Item              - Single item with effects
-  Inventory         - Collection of items with max slots
-  Equipment         - Weapon and armor slots
-  PlayerState       - Full player data including stats
-  PlayerAction      - Action input from frontend
-  AIResponse        - Response from AI narrator
-  ```
-- **Item Types**: WEAPON, ARMOR, CONSUMABLE, QUEST_ITEM, SPECIAL
-- **Methods**: Inventory management (add, remove, check items)
-
-#### `ollama_client.py`
-- **Purpose**: Integration with Ollama API
-- **Main Features**:
-  - `generate_narrative()` - Create story response based on action
-  - `generate_special_event()` - Create random quests if map item exists
-  - `_build_system_prompt()` - Context-aware prompt construction
-  - Includes player stats, equipment, inventory in every request
-- **Error Handling**: Graceful fallbacks if Ollama unavailable
-
-#### `requirements.txt`
-- FastAPI, Uvicorn (server)
-- Pydantic (validation)
-- httpx (async HTTP client for Ollama)
-
-## Data Flow
-
-### Action Processing Flow
+## 전체 구성
 
 ```
-1. User types action in frontend
-   ↓
-2. JavaScript captures and sends to backend: POST /api/game/action
-   ↓
-3. Backend receives PlayerAction
-   ↓
-4. Backend loads current PlayerState from JSON
-   ↓
-5. Backend calls OllamaClient.generate_narrative()
-   ↓
-6. OllamaClient builds context-aware prompt with:
-   - Player stats (HP, attack, defense)
-   - Equipped items (with bonuses)
-   - Inventory items
-   - Current location
-   ↓
-7. Ollama processes prompt and returns narrative
-   ↓
-8. Backend checks for special events (quest generation if map item)
-   ↓
-9. Backend saves updated PlayerState to JSON
-   ↓
-10. Backend returns response with narrative + updated player state
-   ↓
-11. Frontend receives response and updates UI:
-   - Adds narrator message to chat
-   - Updates player stats display
-   - Updates inventory and equipment display
-   - Shows special event if occurred
-   ↓
-12. User sees story and can take next action
+브라우저 (frontend/)                     백엔드 (backend/, FastAPI)
++---------------------------+           +------------------------------+
+| 채팅 (이야기)   | 사이드 패널 |  fetch   | main.py                      |
+| - 나레이터 서사  | - 스탯/장비 | <------> |  - 게임 로직/엔드포인트        |
+| - 행동 입력     | - 인벤토리  |  NDJSON  |  - 전투/퀘스트/상점/이동       |
+| - 전투 로그     | - 퀘스트   |  스트림   |  - 기억 관리(요약 트리거)       |
+|                | - 이동/기록 |           +-------------+----------------+
++---------------------------+                         |
+                                          +-----------v-----------+
+                                          | ollama_client.py      |
+                                          |  - 서사 생성(스트리밍)  |
+                                          |  - 증분 요약 병합       |
+                                          |  - 몬스터/아이템 창작   |
+                                          +-----------+-----------+
+                                                      | HTTP
+                                          +-----------v-----------+
+                                          | Ollama (로컬 LLM)      |
+                                          |  기본: gemma2:2b       |
+                                          +-----------------------+
+
+저장: player_state.json (원자적 저장) + player_state.backup.json (자동 복구)
 ```
 
-### Inventory Management
+## 3계층 기억 시스템 (AI 망각 최소화)
 
-```
-Item in Inventory
-   ↓ User clicks "Equip"
-   ↓
-Backend: equipItem()
-   ├─ Find item in inventory
-   ├─ If weapon: swap with equipped weapon (if exists)
-   ├─ Move item to equipment slot
-   ├─ Remove from inventory
-   ├─ Save state
-   └─ Return updated player
-   ↓
-Frontend: Updates equipment display with item name + bonuses
-```
+이 게임의 핵심 설계. AI가 이야기를 잊지 않도록 세 층으로 기억을 관리합니다.
 
-## State Management
+| 계층 | 저장 위치 | 내용 | 프롬프트 포함 |
+|---|---|---|---|
+| 단기 | `recent_history` | 최근 대화 원문 (플레이어/나레이터/시스템) | 최근 10개 |
+| 중기 | `story_summary` | 오래된 대화의 증분 요약 | 전체 |
+| 장기 | `PlayerState` | 위치, 장비, 골드, 퀘스트, 스탯 | 전체 |
 
-### Player State Structure
-```json
-{
-  "name": "Adventurer",
-  "level": 1,
-  "hp": 100,
-  "max_hp": 100,
-  "attack": 10,
-  "defense": 5,
-  "experience": 0,
-  "location": "Crossroads Village",
-  "inventory": {
-    "items": [
-      {
-        "id": "torch",
-        "name": "Wooden Torch",
-        "description": "A simple wooden torch",
-        "item_type": "consumable",
-        "effect": {"light": 1},
-        "quantity": 3
-      }
-    ],
-    "max_slots": 20
-  },
-  "equipment": {
-    "weapon": null,
-    "armor": null
-  },
-  "quest_log": []
-}
-```
+**요약 흐름** (main.py `_maybe_compress_memory`):
 
-## Special Features
+1. 대화가 30개(`HISTORY_TRIGGER`) 쌓이면 오래된 20개를 잘라냄
+2. 잘라낸 대화는 `pending_summary`로 **세이브 파일에 먼저 영속화** (요약 중 서버가 재시작돼도 유실 없음)
+3. 백그라운드에서 기존 요약과 **병합** (덮어쓰기 아님 — 인물/장소/목표를 압축 보존)
+4. 병합 성공 후에만 pending을 비움. 실패 시 다음 트리거나 서버 시작 시 자동 재시도
+5. 안전밸브: 어떤 이유로든 요약이 멈춰 대화가 100개(`MAX_HISTORY_HARD_LIMIT`)에 달하면 강제 정리
 
-### Map Item Quest Generation
-When a player has a "map" item (item_type: SPECIAL, id: "map"):
-1. After normal narrative generation
-2. Backend checks: `player.inventory.has_item("map")`
-3. If true, calls `generate_special_event()`
-4. Ollama creates brief quest hook
-5. Quest is shown as event message in chat
+**서장(프롤로그)**: 직업 선택 시 `story.py`의 고정 서장이 `story_summary`에 시드로 심어져
+나레이터가 초반 목표(어두운 숲의 이변 조사)를 알고 시작합니다. 이후 플레이어의 선택이
+요약에 병합되며 이야기가 갈라집니다.
 
-### AI Narrative Context
-Every prompt to Ollama includes:
-- Current player stats and effective bonuses
-- All equipped items with their effects
-- Current inventory list
-- Current location
-- Special items the player has
+## AI 동적 생성 (하이브리드)
 
-This allows Ollama to:
-- Mention equipment in narrative ("Your sword glints...")
-- React to items ("The torch illuminates the cave...")
-- Suggest relevant actions ("With the map, you could...")
-- Track location changes
+"AI가 창작, 코드가 밸런스 보장" 원칙:
 
-## Performance Characteristics
+- **몬스터**: 사냥 시 AI가 현재 지역+이야기 요약에 맞는 이름/묘사를 창작 (JSON 강제 모드).
+  스탯은 `enemies_db.py`의 레벨 공식으로 계산. AI 실패 시 고전 몬스터 DB로 폴백.
+- **전리품**: 처치 시 확률적으로 AI가 장비 이름/묘사 창작, 공격/방어/가격은 코드가 결정.
+- **상점/물약은 고정** — 모든 게 무작위면 계획을 세울 수 없으므로 "안정적인 닻" 역할.
 
-- **First Response**: 15-30 seconds (model loading)
-- **Subsequent Responses**: 5-15 seconds (depends on hardware)
-- **Frontend Response**: Instant (local JavaScript)
-- **Save Operations**: <100ms
-- **All processing is local** - no cloud, no internet required
+## 전투 시스템
 
-## Extension Points
+- 적 레벨 = 플레이어 레벨 -1 ~ +2 (지역과 무관하게 항상 적정 난이도)
+- 데미지 = 공격력 × (0.9~1.1) - 방어력, 최소 1
+- **보스**: 10% 확률 (플레이어 레벨 3 이상부터), 레벨 +2, 체력 1.8배/공격 1.2배,
+  보상 3배 + 장비 확정 드롭 (2레벨 높은 등급)
+- 도주 확률 = 40 + 민첩×2 (최대 90%)
+- 사망 시 골드 10% 손실, 마을에서 부활
+- 인벤토리가 가득하면 드롭은 판매가만큼 골드로 대체 (아이템 손실 없음)
 
-### Adding New Items
-1. Create item in `models.py` or in `create_new_game()`
-2. Set appropriate `item_type` (affects how it's used)
-3. Add effects dict (e.g., `{"attack_bonus": 5}`)
-4. Frontend automatically shows use/equip button based on type
+## 퀘스트 시스템
 
-### Modifying AI Behavior
-Edit `_build_system_prompt()` in `ollama_client.py`:
-- Change system instructions
-- Adjust context emphasis (equipment, inventory, location)
-- Add new contextual elements
+동적 몬스터(매번 다른 이름)에 대응하기 위해 특정 몬스터 지정이 아닌 조건 기반:
 
-### Adding Game Mechanics
-1. Extend `PlayerState` in `models.py`
-2. Add methods to handle mechanic (e.g., `take_damage()`)
-3. Create endpoint in `main.py` to trigger mechanic
-4. Call from frontend when needed
+| 타입 | 조건 | 진행 훅 |
+|---|---|---|
+| 처치 (hunt) | 해당 지역에서 몬스터 3/5/8마리 | 전투 승리 |
+| 보스 토벌 (boss) | 아무 지역에서 보스 1마리 | 전투 승리 (boss_ 판정) |
+| 탐험 (explore) | 수락 후 다른 지역 2곳 방문 | 지역 이동 |
 
-### Custom Model Selection
-In `ollama_client.py`:
-```python
-self.model = "mistral"  # or any Ollama-supported model
-```
-Pull model first: `ollama pull mistral`
+- 최대 5개 동시 진행, 완료 기록은 최근 20개 보관
+- 진행 중인 퀘스트는 AI 프롬프트에 포함되어 나레이터가 목표를 인지
 
-## Security Considerations
+## 저장 시스템
 
-- **No authentication** - local development only
-- **CORS enabled** - allows frontend communication
-- **No input validation** - action text sent directly to LLM
-- **File-based saves** - no database, ensure write permissions
-- **No secrets** - all API keys hardcoded for localhost
+- **원자적 저장**: 임시 파일에 쓴 후 교체 (쓰기 도중 크래시로 인한 손상 방지)
+- **백업 자동 복구**: 저장 파일이 깨지면 백업에서 복구
+- **메모리 캐시**: 매 요청마다 파일을 읽지 않음
+- 구버전 세이브 호환: 새 필드는 기본값으로 자동 로드
 
-For production deployment, consider:
-- Add user authentication
-- Validate all inputs before sending to LLM
-- Implement proper save mechanisms
-- Use environment variables for configuration
+## API 엔드포인트
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/game/status` | 현재 상태 조회 (없으면 새 게임 생성) |
+| GET | `/api/game/jobs` | 직업 목록 |
+| POST | `/api/game/new` | 새 게임 |
+| POST | `/api/game/select-job` | 직업 선택 (+프롤로그 반환, AI 기억 시드) |
+| POST | `/api/game/action` | 행동 (일반 응답) |
+| POST | `/api/game/action/stream` | 행동 (NDJSON 스트리밍: chunk... → done) |
+| GET | `/api/game/locations` | 지역 목록 |
+| POST | `/api/game/travel` | 지역 이동 (+탐험 퀘스트 진행) |
+| POST | `/api/game/rest` | 여관 휴식 (마을, 10+레벨×5 골드) |
+| GET | `/api/quest/available` | 퀘스트 게시판 (처치 3 + 보스 + 탐험) |
+| POST | `/api/quest/accept` | 퀘스트 수락 |
+| POST | `/api/combat/start` | 사냥 시작 (AI 몬스터 창작) |
+| POST | `/api/combat/attack` | 공격 |
+| POST | `/api/combat/flee` | 도주 |
+| GET | `/api/shop/list` | 상점 목록 + 판매 가능 아이템 |
+| POST | `/api/shop/buy` | 구매 |
+| POST | `/api/shop/sell` | 판매 (정가의 절반) |
+| POST | `/api/inventory/equip` | 장착 (가득 차도 1:1 교체 안전) |
+| POST | `/api/inventory/unequip` | 해제 (가득 차면 거부 — 소멸 방지) |
+| POST | `/api/inventory/use` | 소모품 사용 (전투 중에도 가능) |
+| POST | `/api/player/update-name` | 이름 변경 |
+
+## 안정성 장치
+
+- AI 호출 전 구간 예외 분리 처리 (타임아웃/연결 실패/파싱 오류별 로그 + 폴백)
+- 서버 시작 시 모델 프리워밍 (첫 응답 지연 제거)
+- Ollama가 완전히 꺼져 있어도 게임은 동작 (폴백 몬스터/안내 메시지)
+- 요약 실패 시 기존 요약 유지 (기억 손실 방지)

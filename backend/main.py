@@ -1,9 +1,13 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import asyncio
 import json
+import logging
 import os
 import random
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from models import (
@@ -19,6 +23,9 @@ from enemies_db import (
 )
 import uuid
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("textrpg.main")
+
 # AI 동적 생성 on/off (테스트 시 0으로 설정해 LLM 호출 생략)
 USE_AI_GENERATION = os.getenv("TEXTRPG_AI_GEN", "1") != "0"
 
@@ -31,7 +38,8 @@ LOCATIONS = {
     "용의 둥지": {"description": "가장 위험한 자들만 발을 들이는 곳.", "can_rest": False},
 }
 
-MAX_ACTIVE_QUESTS = 3
+MAX_ACTIVE_QUESTS = 5        # 지역 5곳 x 지역당 1개 + 보스/탐험 병행 가능
+COMPLETED_QUESTS_CAP = 20    # 완료 기록 보관 개수 (저장 파일 비대화 방지)
 
 # 적 레벨 = 플레이어 레벨 기준 이 범위 내에서 결정
 ENEMY_LEVEL_MIN_OFFSET = -1
@@ -39,6 +47,7 @@ ENEMY_LEVEL_MAX_OFFSET = 2
 
 BOSS_CHANCE = 0.10        # 사냥 시 보스 조우 확률
 BOSS_LEVEL_OFFSET = 2     # 보스 레벨 = 플레이어 레벨 + 2
+BOSS_MIN_PLAYER_LEVEL = 3  # 이 레벨 미만에서는 보스 미등장 (초반 보호)
 
 app = FastAPI(title="Text RPG")
 
@@ -138,7 +147,20 @@ def save_player_state(player: PlayerState) -> None:
 
 @app.on_event("startup")
 async def startup():
-    pass
+    global _summary_in_progress
+
+    # 모델을 미리 로드해 첫 사용자 요청의 지연을 없앤다.
+    # 프리워밍 실패(Ollama 미실행 등)해도 서버 시작은 막지 않는다.
+    if USE_AI_GENERATION:
+        await ollama.warmup()
+
+    # 이전 실행에서 중단된 요약이 있으면 재시도 (재시작 기억 유실 방지)
+    if os.path.exists(SAVE_FILE):
+        player = load_player_state()
+        if player.pending_summary and not _summary_in_progress:
+            logger.info("미완료 요약 발견 (%d개 메시지) - 백그라운드 재시도", len(player.pending_summary))
+            _summary_in_progress = True
+            asyncio.create_task(_merge_pending_summary())
 
 
 @app.on_event("shutdown")
@@ -236,20 +258,31 @@ async def select_job(job: str):
 # 중기: story_summary -> 오래된 대화를 병합 요약해 보존
 # 장기: PlayerState (위치, 장비, 골드, 퀘스트 등)
 
-HISTORY_TRIGGER = 30   # 이 개수에 도달하면 요약 실행
-HISTORY_KEEP = 10      # 요약 후 원문으로 유지할 최근 대화 수
+HISTORY_TRIGGER = 30           # 이 개수에 도달하면 요약 실행
+HISTORY_KEEP = 10              # 요약 후 원문으로 유지할 최근 대화 수
+MAX_HISTORY_HARD_LIMIT = 100   # 절대 상한: 요약 시스템이 고장 나도 이 이상 쌓이지 않음
 
 _summary_in_progress = False
 
 
-async def _merge_old_history_into_summary(old_messages: list):
-    """오래된 대화를 기존 요약과 병합 (백그라운드 실행 - 게임 지연 없음)"""
+async def _merge_pending_summary():
+    """대기 중인 오래된 대화를 기존 요약과 병합 (백그라운드 실행 - 게임 지연 없음)
+
+    잘라낸 대화는 pending_summary로 세이브 파일에 먼저 영속화되어 있으므로,
+    요약 도중 서버가 재시작돼도 유실되지 않는다 (startup에서 재시도).
+    """
     global _summary_in_progress
     try:
         player = load_player_state()
-        new_summary = await ollama.update_summary(player.story_summary, old_messages)
+        if not player.pending_summary:
+            return
+        new_summary = await ollama.update_summary(player.story_summary, player.pending_summary)
         player.story_summary = new_summary
+        player.pending_summary = []  # 병합 성공 후에만 비움
         save_player_state(player)
+    except Exception as e:
+        # pending은 그대로 유지 -> 다음 트리거나 재시작 시 자동 재시도
+        logger.error("요약 병합 실패 (대기 목록 유지, 재시도 예정): %s", e)
     finally:
         _summary_in_progress = False
 
@@ -258,12 +291,21 @@ def _maybe_compress_memory(player: PlayerState, background_tasks: BackgroundTask
     """대화가 쌓이면 오래된 부분을 잘라 백그라운드 요약으로 넘김"""
     global _summary_in_progress
 
+    # 최후의 안전밸브: 요약 시스템이 어떤 이유로든 멈춰도 메모리 고갈은 막는다.
+    # 이 시점의 오래된 대화는 요약 없이 폐기된다 (메모리 보호 우선).
+    if len(player.recent_history) >= MAX_HISTORY_HARD_LIMIT:
+        dropped = len(player.recent_history) - HISTORY_KEEP
+        player.recent_history = player.recent_history[-HISTORY_KEEP:]
+        logger.warning("히스토리 하드 상한 도달 - 오래된 대화 %d개 강제 정리", dropped)
+        return
+
     if len(player.recent_history) >= HISTORY_TRIGGER and not _summary_in_progress:
         _summary_in_progress = True
         cut = len(player.recent_history) - HISTORY_KEEP
-        old_messages = player.recent_history[:cut]
+        # 잘라낸 대화를 pending에 영속화 (호출자가 곧바로 save하므로 파일에 기록됨)
+        player.pending_summary.extend(player.recent_history[:cut])
         player.recent_history = player.recent_history[cut:]
-        background_tasks.add_task(_merge_old_history_into_summary, old_messages)
+        background_tasks.add_task(_merge_pending_summary)
 
 
 def _handle_defeat(player: PlayerState, logs: list) -> None:
@@ -306,10 +348,16 @@ async def travel(location: str):
 
     player.location = location
     player.add_history("시스템", f"{location}(으)로 이동했다.")
+
+    # 탐험 퀘스트 진행 (완료 시 보상 지급까지 처리됨)
+    quest_logs = []
+    _update_explore_progress(player, quest_logs)
+
     save_player_state(player)
 
     return {
         "message": f"{location}에 도착했다. {LOCATIONS[location]['description']}",
+        "logs": quest_logs,
         "player": player.dict()
     }
 
@@ -345,10 +393,35 @@ def _quest_offer_for(location: str, count: int, player_level: int) -> dict:
     return {
         "id": f"ql_{location}_{count}",
         "title": f"{location} 소탕: 몬스터 {count}마리 처치",
+        "quest_type": "hunt",
         "target_location": location,
         "target_count": count,
         "reward_gold": int(stat_formula_gold(player_level) * count * 0.6),
         "reward_xp": int(stat_formula_xp(player_level) * count * 0.4),
+    }
+
+
+def _boss_quest_offer(player_level: int) -> dict:
+    """보스 토벌 퀘스트: 어느 지역이든 보스 1마리 처치"""
+    return {
+        "id": "qb_1",
+        "title": "보스 토벌: 보스 1마리 처치",
+        "quest_type": "boss",
+        "target_count": 1,
+        "reward_gold": int(stat_formula_gold(player_level) * 2.5),
+        "reward_xp": int(stat_formula_xp(player_level) * 2.0),
+    }
+
+
+def _explore_quest_offer(player_level: int) -> dict:
+    """탐험 퀘스트: 수락 후 다른 지역 2곳 방문"""
+    return {
+        "id": "qe_2",
+        "title": "미지의 발걸음: 다른 지역 2곳 방문",
+        "quest_type": "explore",
+        "target_count": 2,
+        "reward_gold": int(stat_formula_gold(player_level) * 1.2),
+        "reward_xp": int(stat_formula_xp(player_level) * 1.0),
     }
 
 
@@ -359,13 +432,22 @@ async def quest_available():
     if player.location not in LOCATIONS:
         return {"offers": [], "active_count": len(player.active_quests), "max_active": MAX_ACTIVE_QUESTS}
 
-    active_locations = {q.target_location for q in player.active_quests}
+    active_locations = {q.target_location for q in player.active_quests if q.quest_type == "hunt"}
+    active_types = {q.quest_type for q in player.active_quests}
 
     offers = []
     for count in (3, 5, 8):
         offer = _quest_offer_for(player.location, count, player.level)
         offer["already_active"] = player.location in active_locations
         offers.append(offer)
+
+    boss_offer = _boss_quest_offer(player.level)
+    boss_offer["already_active"] = "boss" in active_types
+    offers.append(boss_offer)
+
+    explore_offer = _explore_quest_offer(player.level)
+    explore_offer["already_active"] = "explore" in active_types
+    offers.append(explore_offer)
 
     return {
         "offers": offers,
@@ -381,32 +463,52 @@ async def quest_accept(quest_id: str):
     if len(player.active_quests) >= MAX_ACTIVE_QUESTS:
         raise HTTPException(status_code=400, detail=f"퀘스트는 최대 {MAX_ACTIVE_QUESTS}개까지 수락할 수 있습니다")
 
-    # quest_id 형식: ql_<지역명>_<count>
-    parts = quest_id.split("_")
-    if len(parts) < 3 or parts[0] != "ql":
-        raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
+    if quest_id == "qb_1":
+        # 보스 토벌
+        if any(q.quest_type == "boss" for q in player.active_quests):
+            raise HTTPException(status_code=400, detail="이미 보스 토벌 퀘스트를 진행 중입니다")
+        offer = _boss_quest_offer(player.level)
+        quest = Quest(
+            id=offer["id"], title=offer["title"], quest_type="boss",
+            target_count=offer["target_count"],
+            reward_gold=offer["reward_gold"], reward_xp=offer["reward_xp"],
+        )
+    elif quest_id == "qe_2":
+        # 탐험: 수락한 지역은 방문 목록에 미리 넣어 "다른" 지역만 카운트
+        if any(q.quest_type == "explore" for q in player.active_quests):
+            raise HTTPException(status_code=400, detail="이미 탐험 퀘스트를 진행 중입니다")
+        offer = _explore_quest_offer(player.level)
+        quest = Quest(
+            id=offer["id"], title=offer["title"], quest_type="explore",
+            target_count=offer["target_count"],
+            reward_gold=offer["reward_gold"], reward_xp=offer["reward_xp"],
+            visited_locations=[player.location],
+        )
+    else:
+        # 처치 퀘스트: ql_<지역명>_<count>
+        parts = quest_id.split("_")
+        if len(parts) < 3 or parts[0] != "ql":
+            raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
 
-    try:
-        count = int(parts[-1])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
+        try:
+            count = int(parts[-1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
 
-    location = "_".join(parts[1:-1])
-    if location not in LOCATIONS or count not in (3, 5, 8):
-        raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
+        location = "_".join(parts[1:-1])
+        if location not in LOCATIONS or count not in (3, 5, 8):
+            raise HTTPException(status_code=400, detail="유효하지 않은 퀘스트입니다")
 
-    if any(q.target_location == location for q in player.active_quests):
-        raise HTTPException(status_code=400, detail="이미 이 지역의 퀘스트를 진행 중입니다")
+        if any(q.quest_type == "hunt" and q.target_location == location for q in player.active_quests):
+            raise HTTPException(status_code=400, detail="이미 이 지역의 퀘스트를 진행 중입니다")
 
-    offer = _quest_offer_for(location, count, player.level)
-    quest = Quest(
-        id=offer["id"],
-        title=offer["title"],
-        target_location=location,
-        target_count=count,
-        reward_gold=offer["reward_gold"],
-        reward_xp=offer["reward_xp"],
-    )
+        offer = _quest_offer_for(location, count, player.level)
+        quest = Quest(
+            id=offer["id"], title=offer["title"], quest_type="hunt",
+            target_location=location, target_count=count,
+            reward_gold=offer["reward_gold"], reward_xp=offer["reward_xp"],
+        )
+
     player.active_quests.append(quest)
     player.add_history("시스템", f"퀘스트 수락: {quest.title}")
     save_player_state(player)
@@ -417,23 +519,68 @@ async def quest_accept(quest_id: str):
     }
 
 
+def _complete_quest(player: PlayerState, q: Quest, logs: list) -> None:
+    """퀘스트 완료 공통 처리: 보상 지급 + 완료 기록 저장"""
+    player.gold += q.reward_gold
+    levels = player.gain_experience(q.reward_xp)
+    logs.append(f"퀘스트 완료: {q.title}! 보상 골드 +{q.reward_gold}, 경험치 +{q.reward_xp}")
+    if levels > 0:
+        logs.append(f"레벨 업! 현재 레벨 {player.level} (체력 전체 회복)")
+
+    player.stats_quests_completed += 1
+    player.completed_quests.append({
+        "id": q.id,
+        "title": q.title,
+        "quest_type": q.quest_type,
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+        "reward_gold": q.reward_gold,
+        "reward_xp": q.reward_xp,
+    })
+    if len(player.completed_quests) > COMPLETED_QUESTS_CAP:
+        player.completed_quests = player.completed_quests[-COMPLETED_QUESTS_CAP:]
+
+    player.add_history("시스템", f"퀘스트 완료: {q.title}")
+
+
 def _update_quest_progress(player: PlayerState, enemy_id: str, logs: list) -> None:
-    """적 처치 시 퀘스트 진행/완료 처리 (지역 기반 + 구버전 몬스터 지정 호환)"""
+    """적 처치 시 퀘스트 진행/완료 처리 (처치/보스 + 구버전 몬스터 지정 호환)"""
+    is_boss_kill = enemy_id.startswith("boss_")
     completed = []
     for q in player.active_quests:
-        location_match = q.target_location and q.target_location == player.location
-        enemy_match = q.target_enemy_id and q.target_enemy_id == enemy_id
-        if not (location_match or enemy_match):
-            continue
+        if q.quest_type == "boss":
+            if not is_boss_kill:
+                continue
+        elif q.quest_type == "explore":
+            continue  # 탐험은 이동 시 진행
+        else:
+            location_match = q.target_location and q.target_location == player.location
+            enemy_match = q.target_enemy_id and q.target_enemy_id == enemy_id
+            if not (location_match or enemy_match):
+                continue
+
         q.progress += 1
         if q.progress >= q.target_count:
-            player.gold += q.reward_gold
-            levels = player.gain_experience(q.reward_xp)
-            logs.append(f"퀘스트 완료: {q.title}! 보상 골드 +{q.reward_gold}, 경험치 +{q.reward_xp}")
-            if levels > 0:
-                logs.append(f"레벨 업! 현재 레벨 {player.level} (체력 전체 회복)")
-            player.stats_quests_completed += 1
-            player.add_history("시스템", f"퀘스트 완료: {q.title}")
+            _complete_quest(player, q, logs)
+            completed.append(q.id)
+        else:
+            logs.append(f"퀘스트 진행: {q.title} ({q.progress}/{q.target_count})")
+
+    if completed:
+        player.active_quests = [q for q in player.active_quests if q.id not in completed]
+
+
+def _update_explore_progress(player: PlayerState, logs: list) -> None:
+    """지역 이동 시 탐험 퀘스트 진행/완료 처리"""
+    completed = []
+    for q in player.active_quests:
+        if q.quest_type != "explore":
+            continue
+        if player.location in q.visited_locations:
+            continue
+        q.visited_locations.append(player.location)
+        q.progress += 1
+        if q.progress >= q.target_count:
+            _complete_quest(player, q, logs)
             completed.append(q.id)
         else:
             logs.append(f"퀘스트 진행: {q.title} ({q.progress}/{q.target_count})")
@@ -450,7 +597,7 @@ async def start_combat():
         raise HTTPException(status_code=400, detail="이미 전투 중입니다")
 
     logs = []
-    is_boss = random.random() < BOSS_CHANCE
+    is_boss = player.level >= BOSS_MIN_PLAYER_LEVEL and random.random() < BOSS_CHANCE
 
     # 적 레벨은 항상 플레이어 레벨 기준 범위 내에서 결정
     if is_boss:
@@ -559,8 +706,8 @@ async def combat_attack():
     combat_over = False
     victory = False
 
-    # 플레이어의 공격 (80% ~ 120% 편차)
-    damage = max(1, int(player.get_effective_attack() * random.uniform(0.8, 1.2)) - enemy.defense)
+    # 플레이어의 공격 (90% ~ 110% 편차 - 예측 가능한 전투)
+    damage = max(1, int(player.get_effective_attack() * random.uniform(0.9, 1.1)) - enemy.defense)
     enemy.hp = max(0, enemy.hp - damage)
     logs.append(f"{enemy.name}에게 {damage}의 피해를 입혔다. (적 체력 {enemy.hp}/{enemy.max_hp})")
 
@@ -586,7 +733,10 @@ async def combat_attack():
                 if drop_item.description and drop_item.id.startswith("dyn_"):
                     logs.append(drop_item.description)
             else:
-                logs.append("인벤토리가 가득 차서 전리품을 놓쳤다.")
+                # 인벤토리 가득 -> 판매가만큼 골드로 대체 보상 (아이템 손실 방지)
+                gold_comp = max(drop_item.price // 2, 5)
+                player.gold += gold_comp
+                logs.append(f"인벤토리가 가득 차서 {drop_item.name} 대신 골드 {gold_comp}을(를) 획득했다.")
 
         levels_gained = player.gain_experience(enemy.xp_reward)
         if levels_gained > 0:
@@ -600,7 +750,7 @@ async def combat_attack():
         player.add_history("시스템", f"{player.location}에서 {enemy.name}을(를) 물리쳤다.")
     else:
         # 적의 반격
-        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.8, 1.2)))
+        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.9, 1.1)))
         logs.append(f"{enemy.name}의 공격! {enemy_damage}의 피해를 입었다.")
 
         if player.hp <= 0:
@@ -636,7 +786,7 @@ async def combat_flee():
         logs.append("무사히 도망쳤다.")
     else:
         logs.append("도망치지 못했다!")
-        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.8, 1.2)))
+        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.9, 1.1)))
         logs.append(f"{enemy.name}의 공격! {enemy_damage}의 피해를 입었다.")
 
         if player.hp <= 0:
@@ -650,6 +800,20 @@ async def combat_flee():
         "victory": False,
         "player": player.dict()
     }
+
+
+def _sell_price_of(item: Item) -> int:
+    """판매가 계산: 아이템 가격 -> DB 가격 -> 효과 기반 추정 순서로 폴백, 최소 1골드"""
+    price = item.price or get_item_price(item.id)
+    if price <= 0:
+        # 가격 정보가 전혀 없으면 효과 수치로 추정
+        effect = item.effect or {}
+        price = (
+            effect.get("attack_bonus", 0) * 15
+            + effect.get("defense_bonus", 0) * 25
+            + effect.get("heal", 0)
+        )
+    return max(1, price // 2)
 
 
 @app.get("/api/shop/list")
@@ -676,7 +840,7 @@ async def shop_list():
             "id": item.id,
             "name": item.name,
             "quantity": item.quantity,
-            "sell_price": (item.price or get_item_price(item.id)) // 2
+            "sell_price": _sell_price_of(item)
         })
 
     return {"stock": stock, "sellable": sellable, "gold": player.gold}
@@ -723,7 +887,7 @@ async def shop_sell(item_id: str):
     if item.item_type in (ItemType.SPECIAL, ItemType.QUEST_ITEM):
         raise HTTPException(status_code=400, detail="이 아이템은 판매할 수 없습니다")
 
-    sell_price = (item.price or get_item_price(item.id)) // 2
+    sell_price = _sell_price_of(item)
     item_name = item.name
     player.inventory.remove_item(item_id, 1)
     player.gold += sell_price
@@ -768,6 +932,48 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
     return response_data
 
 
+@app.post("/api/game/action/stream")
+async def perform_action_stream(action: PlayerAction, background_tasks: BackgroundTasks):
+    """나레이터 응답을 토큰 단위로 즉시 전송 (NDJSON).
+
+    각 줄은 JSON 객체:
+    - {"type": "chunk", "text": "..."}  이야기 조각 (도착하는 대로 여러 번)
+    - {"type": "done", "narrative": "...", "player": {...}, "special_event": "..."}  완료 시 1회
+    """
+    player = load_player_state()
+
+    if player.current_enemy:
+        raise HTTPException(status_code=400, detail="전투 중에는 행동할 수 없습니다. 공격 또는 도망 버튼을 사용하세요.")
+
+    async def event_generator():
+        full_narrative = ""
+        async for chunk in ollama.generate_narrative_stream(player, action.action):
+            full_narrative += chunk
+            yield json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False) + "\n"
+
+        special_event = await ollama.generate_special_event(player)
+
+        player.add_history("플레이어", action.action)
+        player.add_history("나레이터", full_narrative)
+        if special_event:
+            player.add_history("시스템", special_event)
+
+        _maybe_compress_memory(player, background_tasks)
+        save_player_state(player)
+
+        done_payload = {
+            "type": "done",
+            "narrative": full_narrative,
+            "player": player.dict(),
+        }
+        if special_event:
+            done_payload["special_event"] = special_event
+
+        yield json.dumps(done_payload, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
 @app.post("/api/inventory/equip")
 async def equip_item(item_id: str):
     player = load_player_state()
@@ -777,20 +983,26 @@ async def equip_item(item_id: str):
         raise HTTPException(status_code=404, detail="아이템을 찾을 수 없습니다")
 
     if item.item_type == ItemType.WEAPON:
-        if player.equipment.weapon:
-            player.inventory.add_item(player.equipment.weapon)
-        player.equipment.weapon = item
+        # 새 장비를 먼저 인벤토리에서 빼서 슬롯을 확보한 뒤 기존 장비를 넣는다.
+        # (순서가 반대면 인벤토리가 가득할 때 기존 장비가 소멸)
+        old_weapon = player.equipment.weapon
         player.inventory.remove_item(item_id, 1)
+        if old_weapon and not player.inventory.add_item(old_weapon):
+            player.inventory.add_item(item)  # 원상복구
+            raise HTTPException(status_code=400, detail="인벤토리가 가득 차서 장비를 교체할 수 없습니다")
+        player.equipment.weapon = item
         save_player_state(player)
         return {
             "message": f"{item.name}을(를) 장착했습니다",
             "player": player.dict()
         }
     elif item.item_type == ItemType.ARMOR:
-        if player.equipment.armor:
-            player.inventory.add_item(player.equipment.armor)
-        player.equipment.armor = item
+        old_armor = player.equipment.armor
         player.inventory.remove_item(item_id, 1)
+        if old_armor and not player.inventory.add_item(old_armor):
+            player.inventory.add_item(item)  # 원상복구
+            raise HTTPException(status_code=400, detail="인벤토리가 가득 차서 장비를 교체할 수 없습니다")
+        player.equipment.armor = item
         save_player_state(player)
         return {
             "message": f"{item.name}을(를) 장착했습니다",
@@ -805,17 +1017,18 @@ async def unequip_item(slot: str):
     player = load_player_state()
 
     if slot == "weapon":
-        if player.equipment.weapon:
-            player.inventory.add_item(player.equipment.weapon)
-            player.equipment.weapon = None
-        else:
+        if not player.equipment.weapon:
             raise HTTPException(status_code=400, detail="장착된 무기가 없습니다")
+        # 인벤토리에 못 넣으면 해제 자체를 거부 (아이템 소멸 방지)
+        if not player.inventory.add_item(player.equipment.weapon):
+            raise HTTPException(status_code=400, detail="인벤토리가 가득 차서 해제할 수 없습니다")
+        player.equipment.weapon = None
     elif slot == "armor":
-        if player.equipment.armor:
-            player.inventory.add_item(player.equipment.armor)
-            player.equipment.armor = None
-        else:
+        if not player.equipment.armor:
             raise HTTPException(status_code=400, detail="장착된 방어구가 없습니다")
+        if not player.inventory.add_item(player.equipment.armor):
+            raise HTTPException(status_code=400, detail="인벤토리가 가득 차서 해제할 수 없습니다")
+        player.equipment.armor = None
     else:
         raise HTTPException(status_code=400, detail="유효하지 않은 슬롯입니다")
 

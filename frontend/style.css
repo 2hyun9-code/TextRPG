@@ -432,6 +432,21 @@ body {
     margin-top: 0.3rem;
 }
 
+/* 완료한 퀘스트 기록 */
+.quest-completed-header {
+    color: #888888;
+    font-size: 0.8rem;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed #555555;
+}
+
+.quest-item.completed {
+    color: #888888;
+    border-color: #555555;
+    text-decoration: line-through;
+}
+
 .quest-board-btn {
     margin-top: 0.75rem;
 }

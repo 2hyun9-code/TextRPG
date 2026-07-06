@@ -49,12 +49,14 @@ class Enemy(BaseModel):
 class Quest(BaseModel):
     id: str
     title: str
+    quest_type: str = "hunt"        # hunt(처치) / boss(보스 토벌) / explore(탐험)
     target_enemy_id: str = ""       # 구버전 호환용
     target_location: str = ""       # 동적 몬스터 대응: 지역 기반 처치 퀘스트
     target_count: int
     progress: int = 0
     reward_gold: int = 0
     reward_xp: int = 0
+    visited_locations: List[str] = Field(default_factory=list)  # 탐험 퀘스트: 중복 방문 방지
 
 
 class Inventory(BaseModel):
@@ -103,9 +105,11 @@ class PlayerState(BaseModel):
     job_selected: bool = False
     story_summary: str = ""
     recent_history: List[Dict[str, str]] = Field(default_factory=list)
+    pending_summary: List[Dict[str, str]] = Field(default_factory=list)  # 요약 대기 중 (재시작 유실 방지)
     gold: int = 50
     current_enemy: Optional[Enemy] = None
     active_quests: List[Quest] = Field(default_factory=list)
+    completed_quests: List[Dict[str, Any]] = Field(default_factory=list)  # 완료 기록 (최근 N개)
     stats_kills: int = 0
     stats_deaths: int = 0
     stats_quests_completed: int = 0

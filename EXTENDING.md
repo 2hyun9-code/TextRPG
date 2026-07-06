@@ -1,435 +1,128 @@
-# Extending the Text RPG Game
+# 확장 가이드
 
-This guide shows how to add new features to your Text RPG game.
+게임에 콘텐츠를 추가하는 방법. 모든 예시는 실제 코드 구조 기준입니다.
 
-## Adding New Items
+## 아이템 추가
 
-### Example 1: Add a Health Potion
-
-Edit `backend/main.py` in the `create_new_game()` function:
+`backend/items_db.py`의 `ITEMS_DB`에 항목 추가:
 
 ```python
-def create_new_game() -> PlayerState:
-    player = PlayerState(name="Adventurer")
-    
-    # ... existing items ...
-    
-    # Add health potion
-    player.inventory.add_item(Item(
-        id="health_potion",
-        name="Health Potion",
-        description="Restores 50 HP when used",
-        item_type=ItemType.CONSUMABLE,
-        effect={"heal": 50},
-        quantity=2
-    ))
-    
-    return player
+"flame_sword": {
+    "name": "화염검",
+    "description": "칼날에 불꽃이 흐르는 검.",
+    "item_type": ItemType.WEAPON,
+    "effect": {"attack_bonus": 12},
+    "price": 250,
+},
 ```
 
-The frontend will automatically show a "Use" button for consumable items. The backend's `/api/inventory/use` endpoint already handles the `heal` effect.
+- `item_type`: `WEAPON`(장착) / `ARMOR`(장착) / `CONSUMABLE`(사용) / `SPECIAL`(판매 불가)
+- 무기는 `attack_bonus`, 방어구는 `defense_bonus`, 소모품은 `heal` 효과 사용
+- 상점에서 팔려면 `SHOP_STOCK` 리스트에 id 추가
 
-### Example 2: Add an Iron Sword
+참고: 전리품 장비는 AI가 동적 생성하므로, DB에 추가하는 아이템은 주로 상점용입니다.
+
+## 적(폴백 몬스터) 추가
+
+평소에는 AI가 몬스터를 창작하지만, Ollama가 꺼져 있을 때는
+`backend/enemies_db.py`의 `ENEMY_TEMPLATES`를 사용합니다:
 
 ```python
-player.inventory.add_item(Item(
-    id="iron_sword",
-    name="Iron Sword",
-    description="A sharp iron blade that increases attack power",
-    item_type=ItemType.WEAPON,
-    effect={"attack_bonus": 15},
-    quantity=1
-))
+{"id": "ghost", "name": "원혼", "level": 6, "hp": 110,
+ "attack": 22, "defense": 6, "xp": 140, "gold": 80},
 ```
 
-When equipped, the sword's `attack_bonus` is automatically included in the AI's context and player's effective attack stat.
-
-### Example 3: Add a Mana System
-
-In `models.py`, extend `PlayerState`:
+드롭을 주려면 `DROP_TABLES`에 추가:
 
 ```python
-class PlayerState(BaseModel):
-    name: str = "Adventurer"
-    level: int = 1
-    hp: int = 100
-    max_hp: int = 100
-    mana: int = 50  # ADD THIS
-    max_mana: int = 50  # ADD THIS
-    attack: int = 10
-    defense: int = 5
-    # ... rest of the class ...
-    
-    def use_mana(self, amount: int) -> bool:
-        if self.mana >= amount:
-            self.mana -= amount
-            return True
-        return False
-    
-    def restore_mana(self, amount: int) -> None:
-        self.mana = min(self.max_mana, self.mana + amount)
+"ghost": [("medium_potion", 0.25), ("oak_staff", 0.08)],
 ```
 
-Update the frontend to display mana in `frontend/script.js`:
+### 밸런스 공식 (동적 몬스터 스탯)
 
-```javascript
-function updateUI() {
-    // ... existing code ...
-    
-    // Add mana display
-    const manaPercent = (currentPlayer.mana / currentPlayer.max_mana) * 100;
-    document.getElementById('manaBarFill').style.width = manaPercent + '%';
-    document.getElementById('manaValue').textContent = 
-        `${currentPlayer.mana}/${currentPlayer.max_mana}`;
-}
-```
+레벨 조정 시 참고. `enemies_db.py`에 정의:
 
-And add to `frontend/index.html` in the player stats section:
+| 스탯 | 공식 |
+|---|---|
+| 체력 | 20 + 레벨^1.5 × 8 |
+| 공격 | 4 + 3.6 × 레벨 |
+| 방어 | 1.55 × 레벨 |
+| 경험치 | 20 + 4.5 × 레벨² |
+| 골드 | 경험치 × (0.4 + 레벨 × 0.03) |
 
-```html
-<div class="mana-bar-container">
-    <div class="mana-bar-label">
-        <span>Mana</span>
-        <span id="manaValue">50/50</span>
-    </div>
-    <div class="mana-bar">
-        <div class="mana-bar-fill" id="manaBarFill" style="width: 100%; background: linear-gradient(90deg, #3498db, #2980b9);"></div>
-    </div>
-</div>
-```
+보스 배율: 체력 ×1.8, 공격 ×1.2, 방어 +2, 보상 ×3.
 
-## Adding New Game Mechanics
+## 지역 추가
 
-### Example: Combat System
-
-Add to `backend/models.py`:
+`backend/main.py`의 `LOCATIONS`에 추가:
 
 ```python
-class Enemy(BaseModel):
-    name: str
-    hp: int
-    max_hp: int
-    attack: int
-    defense: int
-    loot: List[Item] = Field(default_factory=list)
-
-class PlayerState(BaseModel):
-    # ... existing fields ...
-    current_enemy: Optional[Enemy] = None
-    
-    def attack_enemy(self) -> int:
-        # Calculate damage
-        base_damage = self.get_effective_attack()
-        # Add randomness
-        import random
-        actual_damage = random.randint(int(base_damage * 0.8), int(base_damage * 1.2))
-        return actual_damage
-    
-    def is_in_combat(self) -> bool:
-        return self.current_enemy is not None
+"얼어붙은 호수": {"description": "수면 아래에서 무언가 움직인다.", "can_rest": False},
 ```
 
-Add endpoint to `backend/main.py`:
+이것만으로 이동 목록, 퀘스트 게시판(해당 지역 소탕), AI 몬스터 창작(장소 반영)에
+자동 연동됩니다. 적 강함은 지역이 아닌 플레이어 레벨에 맞춰 결정되므로
+레벨 범위 지정은 필요 없습니다.
 
-```python
-@app.post("/api/game/attack-enemy")
-async def attack_enemy():
-    player = load_player_state()
-    
-    if not player.is_in_combat():
-        raise HTTPException(status_code=400, detail="Not in combat")
-    
-    damage_dealt = player.attack_enemy()
-    player.current_enemy.hp -= damage_dealt
-    
-    # Check if enemy defeated
-    if player.current_enemy.hp <= 0:
-        # Add loot to inventory
-        for item in player.current_enemy.loot:
-            player.inventory.add_item(item)
-        
-        player.experience += 50
-        player.current_enemy = None
-        message = f"Victory! You dealt {damage_dealt} damage and defeated the {player.current_enemy.name}!"
-    else:
-        # Enemy counterattacks
-        enemy_damage = player.take_damage(player.current_enemy.attack)
-        message = f"You dealt {damage_dealt} damage! Enemy counterattacks for {enemy_damage} damage."
-    
-    save_player_state(player)
-    return {"message": message, "player": player.dict()}
-```
+## 직업 추가
 
-### Example: Experience and Leveling
+세 곳을 수정합니다:
 
-Add to `backend/models.py`:
+1. `backend/models.py` — `JobClass` enum에 추가 + `set_job_class()`의 `job_stats`에 스탯 정의
+   + `get_effective_attack()`에 공격력 공식 + `gain_experience()`의 `growth`에 성장치
+2. `backend/main.py` — `/api/game/jobs`의 직업 목록에 설명 추가
+3. `backend/story.py` — `JOB_NAMES`와 `JOB_PROLOGUES`에 직업명/서장 사연 추가
 
-```python
-class PlayerState(BaseModel):
-    # ... existing fields ...
-    experience: int = 0
-    experience_for_next_level: int = 100
-    
-    def gain_experience(self, amount: int) -> bool:
-        self.experience += amount
-        
-        if self.experience >= self.experience_for_next_level:
-            self.level_up()
-            return True
-        return False
-    
-    def level_up(self) -> None:
-        self.level += 1
-        self.experience = 0
-        self.max_hp += 10
-        self.hp = self.max_hp
-        self.attack += 2
-        self.defense += 1
-        self.experience_for_next_level = int(self.experience_for_next_level * 1.2)
-```
+## 프롤로그(서장) 수정
 
-## Modifying AI Behavior
+`backend/story.py`:
 
-### Making the AI More Dramatic
+- `PROLOGUE_COMMON` — 공통 도입부 (마을, 이변, 촌장의 부탁)
+- `JOB_PROLOGUES` — 직업별 사연
+- `get_seed_summary()` — AI의 초기 기억에 심는 전제. 여기를 바꾸면
+  나레이터가 이끄는 초반 이야기의 방향이 바뀝니다.
 
-Edit `backend/ollama_client.py`:
+## 퀘스트 타입 추가
 
-```python
-def _build_system_prompt(self, player_state: PlayerState) -> str:
-    # ... existing code ...
-    return f"""You are an epic fantasy narrator for a text RPG adventure. 
-The player is {player_state.name}, Level {player_state.level}.
+`backend/main.py` 참고 구현: `_boss_quest_offer` / `_explore_quest_offer`.
 
-Current Status:
-- HP: {player_state.hp}/{player_state.max_hp}
-- Attack: {player_state.get_effective_attack()}
-- Defense: {player_state.defense}
-- Location: {player_state.location}
-- {weapon_info}
-- {armor_info}
-- {special_info}
+새 타입을 만들려면:
 
-Inventory ({len(player_state.inventory.items)}/{player_state.inventory.max_slots}):
-{self._format_inventory(player_state)}
+1. offer 함수 작성 (id, title, quest_type, target_count, 보상)
+2. `/api/quest/available`에서 offers에 추가
+3. `/api/quest/accept`에서 id 분기 처리
+4. 진행 훅 연결 — 처치 계열은 `_update_quest_progress`, 이동 계열은
+   `_update_explore_progress` 패턴을 참고해 해당 엔드포인트에서 호출
+5. 완료 처리는 `_complete_quest(player, q, logs)` 재사용 (보상+기록 자동)
 
-Instructions:
-1. RESPOND WITH DRAMATIC FLAIR - Use vivid descriptions and action words
-2. Keep responses concise (2-3 sentences) but IMPACTFUL
-3. React theatrically to equipped items - make them feel POWERFUL
-4. If the player has a map item, SUGGEST DANGEROUS ADVENTURES
-5. Use sound effects occasionally (CRASH! WHOOSH! etc)
-6. Make the player feel like the hero of an EPIC SAGA
-7. Suggest dramatic next actions with exciting possibilities"""
-```
+주의: 완료 조건이 실제 게임 행동과 연결되지 않는 퀘스트(예: 존재하지 않는
+아이템 수집)는 영원히 완료할 수 없으므로 만들지 마세요.
 
-### Making the AI More Helpful
+## AI 모델/프롬프트 변경
 
-```python
-def _build_system_prompt(self, player_state: PlayerState) -> str:
-    # ... existing code ...
-    return f"""You are a helpful and encouraging narrator for a text RPG game.
+- **모델 교체**: 코드 수정 없이 `OLLAMA_MODEL=모델명 python run.py`
+- **나레이터 성격**: `ollama_client.py`의 `_build_system_prompt()` 지시사항 수정
+- **몬스터 창작 스타일**: `generate_enemy_concept()`의 프롬프트 수정
+- **요약 규칙**: `update_summary()`의 병합 규칙 수정 (보존 우선순위 등)
 
-Current Status:
-- HP: {player_state.hp}/{player_state.max_hp}
-- Location: {player_state.location}
-- Inventory: {len(player_state.inventory.items)} items
+## 밸런스 상수 (main.py 상단)
 
-Instructions:
-1. Describe the results of the player's action clearly
-2. Always provide at least one suggested next action
-3. Remind the player of useful abilities they have
-4. Be encouraging and fun
-5. If an action is unclear, ask for clarification
-6. Suggest using items or equipment when appropriate"""
-```
+| 상수 | 기본값 | 의미 |
+|---|---|---|
+| `HISTORY_TRIGGER` | 30 | 이 개수 도달 시 요약 실행 |
+| `HISTORY_KEEP` | 10 | 요약 후 원문 유지 개수 |
+| `MAX_HISTORY_HARD_LIMIT` | 100 | 히스토리 절대 상한 |
+| `MAX_ACTIVE_QUESTS` | 5 | 동시 퀘스트 수 |
+| `COMPLETED_QUESTS_CAP` | 20 | 완료 기록 보관 수 |
+| `BOSS_CHANCE` | 0.10 | 사냥 시 보스 확률 |
+| `BOSS_LEVEL_OFFSET` | 2 | 보스 레벨 = 플레이어 +2 |
+| `BOSS_MIN_PLAYER_LEVEL` | 3 | 이 레벨 미만 보스 미등장 |
+| `ENEMY_LEVEL_MIN/MAX_OFFSET` | -1 / +2 | 일반 적 레벨 범위 |
 
-## Adding New Item Types
+## UI 규칙
 
-Extend the `ItemType` enum in `backend/models.py`:
+프론트엔드 수정 시 지켜야 할 프로젝트 규칙:
 
-```python
-class ItemType(str, Enum):
-    WEAPON = "weapon"
-    ARMOR = "armor"
-    CONSUMABLE = "consumable"
-    QUEST_ITEM = "quest_item"
-    SPECIAL = "special"
-    SPELL = "spell"  # NEW
-    ACCESSORY = "accessory"  # NEW
-    KEY = "key"  # NEW
-```
-
-Then handle new types in the frontend and backend as needed.
-
-## Adding Locations
-
-Track location in actions:
-
-```python
-@app.post("/api/game/travel")
-async def travel_to_location(location: str):
-    player = load_player_state()
-    
-    valid_locations = [
-        "Crossroads Village",
-        "Dark Forest",
-        "Mountain Peak",
-        "Mysterious Cave",
-        "Seaside Town"
-    ]
-    
-    if location not in valid_locations:
-        raise HTTPException(status_code=400, detail="Invalid location")
-    
-    player.location = location
-    
-    narrative = await ollama.generate_narrative(
-        player, 
-        f"Travel to {location}"
-    )
-    
-    save_player_state(player)
-    
-    return {
-        "narrative": narrative,
-        "player": player.dict()
-    }
-```
-
-## Adding Save/Load Slots
-
-Modify `backend/main.py`:
-
-```python
-import os
-
-SAVE_DIR = "saves"
-os.makedirs(SAVE_DIR, exist_ok=True)
-
-def load_player_state(slot: int = 0) -> PlayerState:
-    save_file = f"{SAVE_DIR}/save_{slot}.json"
-    if os.path.exists(save_file):
-        with open(save_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return PlayerState(**data)
-    return create_new_game()
-
-def save_player_state(player: PlayerState, slot: int = 0) -> None:
-    save_file = f"{SAVE_DIR}/save_{slot}.json"
-    with open(save_file, "w", encoding="utf-8") as f:
-        json.dump(player.dict(), f, ensure_ascii=False, indent=2)
-
-@app.get("/api/game/slots")
-async def get_save_slots():
-    slots = []
-    for i in range(5):
-        path = f"{SAVE_DIR}/save_{i}.json"
-        if os.path.exists(path):
-            slots.append({"slot": i, "exists": True})
-        else:
-            slots.append({"slot": i, "exists": False})
-    return {"slots": slots}
-
-@app.post("/api/game/load-slot")
-async def load_slot(slot: int):
-    # ... implementation ...
-    pass
-```
-
-## Adding Dialogue with NPCs
-
-```python
-class NPC(BaseModel):
-    name: str
-    dialogue: List[str]
-    quest: Optional[str] = None
-
-@app.post("/api/npc/talk")
-async def talk_to_npc(npc_name: str):
-    player = load_player_state()
-    
-    npcs = {
-        "merchant": NPC(
-            name="Merchant",
-            dialogue=[
-                "Welcome to my shop!",
-                "I have fine wares if you have coin.",
-                "The road ahead is dangerous, stay alert."
-            ]
-        )
-    }
-    
-    if npc_name not in npcs:
-        raise HTTPException(status_code=404, detail="NPC not found")
-    
-    npc = npcs[npc_name]
-    import random
-    dialogue = random.choice(npc.dialogue)
-    
-    return {"npc": npc_name, "dialogue": dialogue}
-```
-
-## Adding Achievements/Badges
-
-In `backend/models.py`:
-
-```python
-class Achievement(BaseModel):
-    id: str
-    name: str
-    description: str
-    earned: bool = False
-    earned_at: Optional[datetime] = None
-
-class PlayerState(BaseModel):
-    # ... existing fields ...
-    achievements: List[Achievement] = Field(default_factory=list)
-    
-    def unlock_achievement(self, achievement_id: str) -> bool:
-        achievement = next(
-            (a for a in self.achievements if a.id == achievement_id), 
-            None
-        )
-        if achievement and not achievement.earned:
-            achievement.earned = True
-            achievement.earned_at = datetime.now()
-            return True
-        return False
-```
-
-## Tips for Extension
-
-1. **Keep AI prompts concise** - Shorter prompts = faster responses
-2. **Test locally first** - Run the backend/frontend locally before deploying
-3. **Save after state changes** - Always call `save_player_state()` after modifying player
-4. **Use item effects dict** - Effects like `{"attack_bonus": 5}` are flexible
-5. **Update frontend UI incrementally** - Test each change
-6. **Use meaningful item IDs** - Makes debugging easier (e.g., "iron_sword" not "item1")
-7. **Document custom mechanics** - Future you will thank present you!
-
-## Common Patterns
-
-### Check if player has specific item
-```python
-if player.inventory.has_item("map"):
-    # Do something
-```
-
-### Add item to inventory
-```python
-new_item = Item(id="key", name="Golden Key", ...)
-player.inventory.add_item(new_item)
-```
-
-### Calculate effective stat
-```python
-effective_attack = player.get_effective_attack()  # Includes equipment bonuses
-```
-
-### Update in-game narrative
-```python
-narrative = await ollama.generate_narrative(player, "Specific action here")
-addNarratorMessage(narrative);  # From frontend
-```
-
-Enjoy building your epic adventure! 🎮⚔️
+- 배경은 검정(#000000), 테두리는 흰색(#ffffff) — 회색조(#555~#ccc)는 보조로 허용
+- **이모지/이미지 절대 사용 금지** — 순수 텍스트만
+- 모든 게임 텍스트는 한국어

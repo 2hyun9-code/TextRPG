@@ -211,6 +211,36 @@ function addNarratorMessage(content) {
     addMessage('narrator', content, 'narrative');
 }
 
+function startStreamingNarratorMessage() {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message narrator';
+
+    const paragraph = document.createElement('p');
+    messageDiv.appendChild(paragraph);
+
+    elements.chatMessages.appendChild(messageDiv);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+
+    return paragraph;
+}
+
+function appendStreamChunk(paragraph, text) {
+    paragraph.textContent += text;
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function finalizeStreamedMessage(content) {
+    gameState.messageHistory.push({ role: 'narrator', content, type: 'narrative' });
+
+    if (gameState.messageHistory.length > 500) {
+        gameState.messageHistory.shift();
+        const firstMessage = elements.chatMessages.firstChild;
+        if (firstMessage) {
+            firstMessage.remove();
+        }
+    }
+}
+
 function addEventMessage(content) {
     addMessage('event', content, 'event');
 }
@@ -246,8 +276,10 @@ async function submitAction() {
     elements.actionInput.value = '';
     showTyping();
 
+    let streamParagraph = null;
+
     try {
-        const response = await fetch(`${API_BASE_URL}/game/action`, {
+        const response = await fetch(`${API_BASE_URL}/game/action/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: actionText })
@@ -257,23 +289,43 @@ async function submitAction() {
             const error = await response.json();
             hideTyping();
             addSystemMessage(`오류: ${error.detail}`);
-            gameState.isLoading = false;
-            elements.submitBtn.disabled = false;
-            elements.actionInput.disabled = false;
             return;
         }
 
-        const data = await response.json();
-        currentPlayer = data.player;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        hideTyping();
-        addNarratorMessage(data.narrative);
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        if (data.special_event) {
-            addEventMessage(data.special_event);
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // 마지막 줄은 아직 완성 안 됐을 수 있음
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                const event = JSON.parse(line);
+
+                if (event.type === 'chunk') {
+                    if (!streamParagraph) {
+                        hideTyping();
+                        streamParagraph = startStreamingNarratorMessage();
+                    }
+                    appendStreamChunk(streamParagraph, event.text);
+                } else if (event.type === 'done') {
+                    currentPlayer = event.player;
+                    finalizeStreamedMessage(event.narrative);
+
+                    if (event.special_event) {
+                        addEventMessage(event.special_event);
+                    }
+
+                    updateUI();
+                }
+            }
         }
-
-        updateUI();
     } catch (error) {
         console.error('Error performing action:', error);
         hideTyping();
@@ -641,18 +693,30 @@ async function useItem(itemId) {
 
 function updateQuests() {
     const quests = currentPlayer.active_quests || [];
+    const completed = currentPlayer.completed_quests || [];
+
+    let html = '';
 
     if (quests.length === 0) {
-        elements.questList.innerHTML = '<div class="empty-message">진행 중인 퀘스트가 없습니다</div>';
-        return;
+        html += '<div class="empty-message">진행 중인 퀘스트가 없습니다</div>';
+    } else {
+        html += quests.map(q => `
+            <div class="quest-item">
+                ${q.title}
+                <div class="quest-progress">진행: ${q.progress}/${q.target_count} | 보상: ${q.reward_gold}골드, 경험치 ${q.reward_xp}</div>
+            </div>
+        `).join('');
     }
 
-    elements.questList.innerHTML = quests.map(q => `
-        <div class="quest-item">
-            ${q.title}
-            <div class="quest-progress">진행: ${q.progress}/${q.target_count} | 보상: ${q.reward_gold}골드, 경험치 ${q.reward_xp}</div>
-        </div>
-    `).join('');
+    if (completed.length > 0) {
+        const total = currentPlayer.stats_quests_completed ?? completed.length;
+        html += `<div class="quest-completed-header">최근 완료 (누적 ${total}개)</div>`;
+        html += completed.slice(-3).reverse().map(q => `
+            <div class="quest-item completed">${q.title}</div>
+        `).join('');
+    }
+
+    elements.questList.innerHTML = html;
 }
 
 // ===== 이동 시스템 =====
@@ -693,6 +757,9 @@ async function travelTo(location) {
 
         currentPlayer = data.player;
         addEventMessage(data.message);
+        if (data.logs) {
+            data.logs.forEach(log => addEventMessage(log));
+        }
         updateUI();
         loadLocations();
     } catch (error) {
