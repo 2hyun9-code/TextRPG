@@ -66,12 +66,38 @@
 
 ## 직업 추가
 
-세 곳을 수정합니다:
+네 곳을 수정합니다:
 
 1. `backend/models.py` — `JobClass` enum에 추가 + `set_job_class()`의 `job_stats`에 스탯 정의
-   + `get_effective_attack()`에 공격력 공식 + `gain_experience()`의 `growth`에 성장치
+   (마나 포함) + `get_effective_attack()`에 공격력 공식 + `_level_up()`의 `growth`에 성장치
+   + `apply_mp_migration()`의 마나 표
 2. `backend/main.py` — `/api/game/jobs`의 직업 목록에 설명 추가
 3. `backend/story.py` — `JOB_NAMES`와 `JOB_PROLOGUES`에 직업명/서장 사연 추가
+4. `backend/skills_db.py` — `SKILLS`에 고유 스킬 정의
+
+## 스킬 수정/추가
+
+`backend/skills_db.py`의 `SKILLS`에서 직업별 스킬을 조정합니다:
+
+```python
+"warrior": {
+    "name": "강타",
+    "mp_cost": 10,          # 소모 정신력
+    "damage_mult": 2.0,     # 유효 공격력 배율
+    "int_scale": 0,         # 피해에 추가되는 지능 계수 (마법 계열)
+    "ignore_defense": False, # 적 방어 무시
+    "self_heal_int": 0,     # 사용 시 지능 x 계수만큼 자기 회복
+},
+```
+
+수치만 바꾸면 즉시 반영됩니다 (전투 계산은 main.py `combat_skill`이 공통 처리).
+
+## 상태 이상 조정
+
+`backend/main.py`의 `_enemy_counterattack()`에서 확률/지속 턴을,
+`_tick_status_effects()`에서 중독 피해 공식(레벨×2)을 조정합니다.
+새 상태 이상을 추가하려면 두 함수에 분기를 추가하고 프론트엔드
+`updateCombatPanel()`의 `effectNames`에 한국어 이름을 등록하세요.
 
 ## 프롤로그(서장) 수정
 
@@ -100,10 +126,12 @@
 
 ## AI 모델/프롬프트 변경
 
-- **모델 교체**: 코드 수정 없이 `OLLAMA_MODEL=모델명 python run.py`
+- **모델 교체**: 설정 모달의 "AI 모델" 드롭다운 (일시적) 또는
+  `OLLAMA_MODEL=모델명 python run.py` (영구)
 - **나레이터 성격**: `ollama_client.py`의 `_build_system_prompt()` 지시사항 수정
 - **몬스터 창작 스타일**: `generate_enemy_concept()`의 프롬프트 수정
 - **요약 규칙**: `update_summary()`의 병합 규칙 수정 (보존 우선순위 등)
+- **서사 이벤트 상한**: `main.py`의 `_apply_story_events()`에서 골드/체력 상한 공식 조정
 
 ## 밸런스 상수 (main.py 상단)
 

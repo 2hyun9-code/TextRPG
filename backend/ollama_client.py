@@ -20,6 +20,16 @@ class OllamaClient:
     async def close(self):
         await self.client.aclose()
 
+    async def list_models(self) -> list:
+        """설치된 Ollama 모델 목록 (실패 시 빈 목록)"""
+        try:
+            response = await self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            response.raise_for_status()
+            return [m["name"] for m in response.json().get("models", [])]
+        except Exception as e:
+            logger.warning("모델 목록 조회 실패: %s", e)
+            return []
+
     async def warmup(self) -> None:
         """서버 시작 시 모델을 미리 메모리에 로드해 첫 요청 지연을 없앤다."""
         try:
@@ -328,6 +338,41 @@ class OllamaClient:
             return None
 
         return {"name": name, "description": description[:100]}
+
+    async def extract_story_events(self, narrative: str) -> Optional[dict]:
+        """서사에서 실제 게임 상태 변화(골드/체력/아이템)를 추출
+
+        값의 범위 제한과 적용 여부는 호출자(코드)가 결정한다.
+        실패 시 None -> 서사만 출력 (게임 상태 변화 없음)
+        """
+        prompt = f"""당신은 텍스트 RPG의 심판입니다. 아래 서사를 읽고 플레이어에게 실제로 일어난 변화만 추출하세요.
+
+서사:
+{narrative}
+
+규칙:
+1. 서사에 명확히 서술된 변화만 추출하세요 (암시나 가능성은 제외)
+2. 골드를 줍거나 잃었으면 gold에 숫자 (없으면 0)
+3. 다치거나 회복했으면 hp에 숫자 (다침은 음수, 없으면 0)
+4. 물건을 획득했으면 item_name에 이름, item_kind에 "weapon"/"armor"/"potion" 중 하나 (없으면 null)
+5. 대부분의 서사에는 아무 변화가 없습니다. 확실하지 않으면 0과 null을 쓰세요.
+
+반드시 이 JSON 형식으로만 답하세요:
+{{"gold": 0, "hp": 0, "item_name": null, "item_kind": null}}"""
+
+        data = await self._generate_json(prompt, timeout=20.0)
+        if not data:
+            return None
+
+        try:
+            return {
+                "gold": int(data.get("gold") or 0),
+                "hp": int(data.get("hp") or 0),
+                "item_name": str(data["item_name"]).strip() if data.get("item_name") else None,
+                "item_kind": str(data["item_kind"]).strip() if data.get("item_kind") else None,
+            }
+        except (ValueError, TypeError):
+            return None
 
     async def generate_special_event(self, player_state: PlayerState) -> Optional[str]:
         if not player_state.inventory.has_item("map"):

@@ -78,8 +78,9 @@ $env:OLLAMA_MODEL = "llama2-uncensored"; python run.py
 - 2B급 소형 모델의 한계입니다. 더 나은 품질을 원하면:
   ```bash
   ollama pull gemma2:9b
-  OLLAMA_MODEL=gemma2:9b python run.py
   ```
+  받은 뒤 게임 내 **설정 → AI 모델**에서 선택하거나 (일시적),
+  `OLLAMA_MODEL=gemma2:9b python run.py`로 실행 (영구)
 
 **브라우저에 옛 화면이 보임**
 - 서버가 캐시 방지 헤더를 보내지만, 안 될 경우 Ctrl+Shift+R (강력 새로고침)

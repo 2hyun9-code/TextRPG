@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
@@ -17,6 +17,7 @@ from models import (
 from ollama_client import OllamaClient
 from items_db import ITEMS_DB, SHOP_STOCK, create_item, get_item_price
 from story import get_prologue, get_seed_summary, JOB_NAMES
+from skills_db import get_skill
 from enemies_db import (
     ENEMY_TEMPLATES, get_random_enemy_in_range, get_templates_in_range, roll_drop,
     build_dynamic_enemy, stat_formula_xp, stat_formula_gold
@@ -73,6 +74,11 @@ frontend_path = Path(__file__).parent.parent / "frontend"
 if frontend_path.exists():
     app.mount("/frontend", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 
+
+@app.get("/")
+async def root_redirect():
+    return RedirectResponse(url="/frontend/")
+
 ollama = OllamaClient()
 
 SAVE_FILE = "player_state.json"
@@ -87,7 +93,11 @@ def _read_save_file(path: str) -> Optional[PlayerState]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return PlayerState(**data)
+            player = PlayerState(**data)
+            # 마나 도입 이전 세이브 마이그레이션
+            if "max_mp" not in data and player.job_selected:
+                player.apply_mp_migration()
+            return player
     except (json.JSONDecodeError, ValueError, OSError):
         return None
 
@@ -226,6 +236,86 @@ async def new_game():
     return {"player": player.dict(), "message": "새 게임이 시작되었습니다!"}
 
 
+# ===== 저장 슬롯 (3개) =====
+
+SAVE_SLOTS = 3
+
+
+def _slot_path(slot: int) -> str:
+    return f"save_slot_{slot}.json"
+
+
+def _validate_slot(slot: int) -> None:
+    if slot < 1 or slot > SAVE_SLOTS:
+        raise HTTPException(status_code=400, detail=f"슬롯은 1~{SAVE_SLOTS} 사이여야 합니다")
+
+
+@app.get("/api/saves")
+async def list_saves():
+    """저장 슬롯 목록 (요약 정보만)"""
+    slots = []
+    for slot in range(1, SAVE_SLOTS + 1):
+        path = _slot_path(slot)
+        info = {"slot": slot, "exists": False}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                info.update({
+                    "exists": True,
+                    "name": data.get("name", "?"),
+                    "level": data.get("level", 1),
+                    "job": JOB_NAMES.get(data.get("job_class", ""), data.get("job_class", "?")),
+                    "location": data.get("location", "?"),
+                    "saved_at": data.get("_saved_at", ""),
+                })
+            except (json.JSONDecodeError, OSError):
+                info["corrupted"] = True
+        slots.append(info)
+    return {"slots": slots}
+
+
+@app.post("/api/saves/save")
+async def save_to_slot(slot: int):
+    """현재 진행을 슬롯에 저장 (기존 슬롯 내용은 덮어씀)"""
+    _validate_slot(slot)
+    player = load_player_state()
+
+    data = player.dict()
+    data["_saved_at"] = datetime.now().isoformat(timespec="seconds")
+
+    tmp = _slot_path(slot) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _slot_path(slot))
+
+    return {"message": f"슬롯 {slot}에 저장했습니다", "slot": slot}
+
+
+@app.post("/api/saves/load")
+async def load_from_slot(slot: int):
+    """슬롯의 진행을 불러와 현재 게임으로 교체"""
+    _validate_slot(slot)
+    path = _slot_path(slot)
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="빈 슬롯입니다")
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.pop("_saved_at", None)
+        player = PlayerState(**data)
+    except (json.JSONDecodeError, ValueError, OSError):
+        raise HTTPException(status_code=400, detail="슬롯 데이터가 손상되었습니다")
+
+    save_player_state(player)
+    return {
+        "message": f"슬롯 {slot}을 불러왔습니다",
+        "player": player.dict()
+    }
+
+
 @app.post("/api/game/select-job")
 async def select_job(job: str):
     player = load_player_state()
@@ -317,6 +407,7 @@ def _handle_defeat(player: PlayerState, logs: list) -> None:
     player.location = "교차로 마을"
     player.current_enemy = None
     player.stats_deaths += 1
+    player.clear_status()
     logs.append(f"쓰러졌다... 골드 {lost_gold}을(를) 잃고 교차로 마을에서 눈을 떴다.")
     player.add_history("시스템", f"{enemy_name}에게 패배해 교차로 마을에서 다시 눈을 떴다.")
 
@@ -370,8 +461,8 @@ async def rest_at_inn():
         raise HTTPException(status_code=400, detail="전투 중에는 쉴 수 없습니다")
     if not LOCATIONS.get(player.location, {}).get("can_rest"):
         raise HTTPException(status_code=400, detail="이곳에는 여관이 없습니다")
-    if player.hp >= player.max_hp:
-        raise HTTPException(status_code=400, detail="이미 체력이 가득 찼습니다")
+    if player.hp >= player.max_hp and player.mp >= player.max_mp:
+        raise HTTPException(status_code=400, detail="이미 체력과 정신력이 가득 찼습니다")
 
     cost = 10 + player.level * 5
     if player.gold < cost:
@@ -379,11 +470,13 @@ async def rest_at_inn():
 
     player.gold -= cost
     player.hp = player.max_hp
-    player.add_history("시스템", "여관에서 하룻밤 쉬어 체력을 모두 회복했다.")
+    player.mp = player.max_mp
+    player.clear_status()
+    player.add_history("시스템", "여관에서 하룻밤 쉬어 체력과 정신력을 모두 회복했다.")
     save_player_state(player)
 
     return {
-        "message": f"여관에서 편안히 쉬었다. 체력이 모두 회복되었다. (-{cost} 골드)",
+        "message": f"여관에서 편안히 쉬었다. 체력과 정신력이 모두 회복되었다. (-{cost} 골드)",
         "player": player.dict()
     }
 
@@ -694,67 +787,97 @@ async def _roll_dynamic_drop(player: PlayerState, enemy, guaranteed: bool = Fals
     return None
 
 
-@app.post("/api/combat/attack")
-async def combat_attack():
-    player = load_player_state()
-    enemy = player.current_enemy
+async def _handle_victory(player: PlayerState, enemy, logs: list) -> None:
+    """전투 승리 공통 처리: 보상, 전리품, 경험치, 퀘스트, 기억"""
+    player.gold += enemy.gold_reward
+    logs.append(f"{enemy.name}을(를) 물리쳤다! 경험치 +{enemy.xp_reward}, 골드 +{enemy.gold_reward}")
 
-    if not enemy:
-        raise HTTPException(status_code=400, detail="전투 중이 아닙니다")
+    # 전리품: 보스는 확정 장비, 동적 몬스터는 AI 창작 장비/물약, 고전 몬스터는 드롭 테이블
+    if enemy.id.startswith("boss_"):
+        drop_item = await _roll_dynamic_drop(player, enemy, guaranteed=True)
+    elif enemy.id.startswith("dyn_"):
+        drop_item = await _roll_dynamic_drop(player, enemy)
+    else:
+        drop_id = roll_drop(enemy.id)
+        drop_item = create_item(drop_id) if drop_id else None
 
-    logs = []
+    if drop_item:
+        if player.inventory.add_item(drop_item):
+            logs.append(f"전리품 획득: {drop_item.name}")
+            if drop_item.description and drop_item.id.startswith("dyn_"):
+                logs.append(drop_item.description)
+        else:
+            # 인벤토리 가득 -> 판매가만큼 골드로 대체 보상 (아이템 손실 방지)
+            gold_comp = max(drop_item.price // 2, 5)
+            player.gold += gold_comp
+            logs.append(f"인벤토리가 가득 차서 {drop_item.name} 대신 골드 {gold_comp}을(를) 획득했다.")
+
+    levels_gained = player.gain_experience(enemy.xp_reward)
+    if levels_gained > 0:
+        logs.append(f"레벨 업! 현재 레벨 {player.level} (체력/정신력 전체 회복)")
+
+    player.current_enemy = None
+    player.stats_kills += 1
+    player.clear_status()  # 전투 종료 시 상태 이상 해제
+    # 퀘스트 진행 갱신
+    _update_quest_progress(player, enemy.id, logs)
+    # 전투 결과를 기억에 기록 (나레이터가 이후 이야기에 반영)
+    player.add_history("시스템", f"{player.location}에서 {enemy.name}을(를) 물리쳤다.")
+
+
+def _tick_status_effects(player: PlayerState, logs: list) -> bool:
+    """턴 시작 시 상태 이상 처리. 기절로 행동 불가면 True 반환"""
+    stunned = False
+    remaining = []
+    for e in player.status_effects:
+        if e["type"] == "poison":
+            poison_dmg = max(1, player.level * 2)
+            player.hp = max(0, player.hp - poison_dmg)
+            logs.append(f"독이 몸을 파고든다... {poison_dmg}의 피해. (남은 {e['turns'] - 1}턴)")
+        elif e["type"] == "stun":
+            stunned = True
+            logs.append("기절해서 움직일 수 없다!")
+        e["turns"] -= 1
+        if e["turns"] > 0:
+            remaining.append(e)
+    player.status_effects = remaining
+    return stunned
+
+
+def _enemy_counterattack(player: PlayerState, enemy, logs: list) -> None:
+    """적의 반격 + 상태 이상 부여 확률"""
+    enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.9, 1.1)))
+    logs.append(f"{enemy.name}의 공격! {enemy_damage}의 피해를 입었다.")
+
+    if player.hp <= 0:
+        return
+
+    # 상태 이상 부여: 보스는 기절(20%), 일반 몬스터는 중독(12%)
+    if enemy.id.startswith("boss_"):
+        if random.random() < 0.20 and not player.has_status("stun"):
+            player.add_status("stun", 1)
+            logs.append(f"{enemy.name}의 일격에 정신이 아득해진다... [기절 1턴]")
+    elif random.random() < 0.12 and not player.has_status("poison"):
+        player.add_status("poison", 3)
+        logs.append(f"{enemy.name}의 공격에 독이 스며든다... [중독 3턴]")
+
+
+async def _combat_turn(player: PlayerState, enemy, damage: int, logs: list) -> dict:
+    """공격/스킬 공통 전투 턴 처리: 피해 적용 -> 승리 또는 반격/패배"""
     combat_over = False
     victory = False
 
-    # 플레이어의 공격 (90% ~ 110% 편차 - 예측 가능한 전투)
-    damage = max(1, int(player.get_effective_attack() * random.uniform(0.9, 1.1)) - enemy.defense)
     enemy.hp = max(0, enemy.hp - damage)
-    logs.append(f"{enemy.name}에게 {damage}의 피해를 입혔다. (적 체력 {enemy.hp}/{enemy.max_hp})")
 
     if enemy.hp <= 0:
-        # 승리 - 보상 지급
         combat_over = True
         victory = True
-        player.gold += enemy.gold_reward
-        logs.append(f"{enemy.name}을(를) 물리쳤다! 경험치 +{enemy.xp_reward}, 골드 +{enemy.gold_reward}")
-
-        # 전리품: 보스는 확정 장비, 동적 몬스터는 AI 창작 장비/물약, 고전 몬스터는 드롭 테이블
-        if enemy.id.startswith("boss_"):
-            drop_item = await _roll_dynamic_drop(player, enemy, guaranteed=True)
-        elif enemy.id.startswith("dyn_"):
-            drop_item = await _roll_dynamic_drop(player, enemy)
-        else:
-            drop_id = roll_drop(enemy.id)
-            drop_item = create_item(drop_id) if drop_id else None
-
-        if drop_item:
-            if player.inventory.add_item(drop_item):
-                logs.append(f"전리품 획득: {drop_item.name}")
-                if drop_item.description and drop_item.id.startswith("dyn_"):
-                    logs.append(drop_item.description)
-            else:
-                # 인벤토리 가득 -> 판매가만큼 골드로 대체 보상 (아이템 손실 방지)
-                gold_comp = max(drop_item.price // 2, 5)
-                player.gold += gold_comp
-                logs.append(f"인벤토리가 가득 차서 {drop_item.name} 대신 골드 {gold_comp}을(를) 획득했다.")
-
-        levels_gained = player.gain_experience(enemy.xp_reward)
-        if levels_gained > 0:
-            logs.append(f"레벨 업! 현재 레벨 {player.level} (체력 전체 회복)")
-
-        player.current_enemy = None
-        player.stats_kills += 1
-        # 퀘스트 진행 갱신
-        _update_quest_progress(player, enemy.id, logs)
-        # 전투 결과를 기억에 기록 (나레이터가 이후 이야기에 반영)
-        player.add_history("시스템", f"{player.location}에서 {enemy.name}을(를) 물리쳤다.")
+        await _handle_victory(player, enemy, logs)
     else:
-        # 적의 반격
-        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.9, 1.1)))
-        logs.append(f"{enemy.name}의 공격! {enemy_damage}의 피해를 입었다.")
-
+        _enemy_counterattack(player, enemy, logs)
         if player.hp <= 0:
             combat_over = True
+            player.clear_status()
             _handle_defeat(player, logs)
 
     save_player_state(player)
@@ -764,6 +887,84 @@ async def combat_attack():
         "victory": victory,
         "player": player.dict()
     }
+
+
+@app.post("/api/combat/attack")
+async def combat_attack():
+    player = load_player_state()
+    enemy = player.current_enemy
+
+    if not enemy:
+        raise HTTPException(status_code=400, detail="전투 중이 아닙니다")
+
+    logs = []
+
+    # 상태 이상 처리 (중독 피해, 기절 시 행동 불가)
+    stunned = _tick_status_effects(player, logs)
+    if player.hp <= 0:
+        player.clear_status()
+        _handle_defeat(player, logs)
+        save_player_state(player)
+        return {"logs": logs, "combat_over": True, "victory": False, "player": player.dict()}
+    if stunned:
+        _enemy_counterattack(player, enemy, logs)
+        combat_over = player.hp <= 0
+        if combat_over:
+            player.clear_status()
+            _handle_defeat(player, logs)
+        save_player_state(player)
+        return {"logs": logs, "combat_over": combat_over, "victory": False, "player": player.dict()}
+
+    # 플레이어의 공격 (90% ~ 110% 편차 - 예측 가능한 전투)
+    damage = max(1, int(player.get_effective_attack() * random.uniform(0.9, 1.1)) - enemy.defense)
+    logs.append(f"{enemy.name}에게 {damage}의 피해를 입혔다. (적 체력 {max(0, enemy.hp - damage)}/{enemy.max_hp})")
+
+    return await _combat_turn(player, enemy, damage, logs)
+
+
+@app.post("/api/combat/skill")
+async def combat_skill():
+    player = load_player_state()
+    enemy = player.current_enemy
+
+    if not enemy:
+        raise HTTPException(status_code=400, detail="전투 중이 아닙니다")
+
+    skill = get_skill(player.job_class.value)
+    if player.mp < skill["mp_cost"]:
+        raise HTTPException(status_code=400, detail=f"정신력이 부족합니다 (필요: {skill['mp_cost']})")
+
+    logs = []
+
+    stunned = _tick_status_effects(player, logs)
+    if player.hp <= 0:
+        player.clear_status()
+        _handle_defeat(player, logs)
+        save_player_state(player)
+        return {"logs": logs, "combat_over": True, "victory": False, "player": player.dict()}
+    if stunned:
+        _enemy_counterattack(player, enemy, logs)
+        combat_over = player.hp <= 0
+        if combat_over:
+            player.clear_status()
+            _handle_defeat(player, logs)
+        save_player_state(player)
+        return {"logs": logs, "combat_over": combat_over, "victory": False, "player": player.dict()}
+
+    player.mp -= skill["mp_cost"]
+
+    # 스킬 피해 계산: 유효 공격 x 배율 + 지능 계수, 방어 무시 옵션
+    base = player.get_effective_attack() * skill["damage_mult"] + player.intelligence * skill["int_scale"]
+    enemy_def = 0 if skill["ignore_defense"] else enemy.defense
+    damage = max(1, int(base * random.uniform(0.9, 1.1)) - enemy_def)
+    logs.append(f"[{skill['name']}] {enemy.name}에게 {damage}의 피해! (적 체력 {max(0, enemy.hp - damage)}/{enemy.max_hp}, 정신력 -{skill['mp_cost']})")
+
+    if skill["self_heal_int"] > 0:
+        heal_amount = player.intelligence * skill["self_heal_int"]
+        player.heal(heal_amount)
+        logs.append(f"빛의 가호로 체력을 {heal_amount} 회복했다.")
+
+    return await _combat_turn(player, enemy, damage, logs)
 
 
 @app.post("/api/combat/flee")
@@ -783,11 +984,11 @@ async def combat_flee():
     if random.randint(1, 100) <= flee_chance:
         combat_over = True
         player.current_enemy = None
+        player.clear_status()
         logs.append("무사히 도망쳤다.")
     else:
         logs.append("도망치지 못했다!")
-        enemy_damage = player.take_damage(int(enemy.attack * random.uniform(0.9, 1.1)))
-        logs.append(f"{enemy.name}의 공격! {enemy_damage}의 피해를 입었다.")
+        _enemy_counterattack(player, enemy, logs)
 
         if player.hp <= 0:
             combat_over = True
@@ -899,6 +1100,77 @@ async def shop_sell(item_id: str):
     }
 
 
+async def _apply_story_events(player: PlayerState, narrative: str) -> list:
+    """서사에서 추출한 상태 변화를 검증/제한 후 적용. 적용 로그 반환
+
+    AI는 제안만 하고 코드가 범위를 강제한다:
+    - 골드: 레벨 비례 상한 (파밍 방지)
+    - 체력: 레벨 비례 상한, 사망 없음 (최소 1)
+    - 아이템: 인벤토리 여유 있을 때만, 스탯은 코드가 결정 (일반 몬스터 전리품보다 약간 약함)
+    """
+    events = await ollama.extract_story_events(narrative)
+    if not events:
+        return []
+
+    logs = []
+
+    gold_cap_gain = 10 + player.level * 2
+    gold_cap_loss = 15 + player.level * 3
+    gold = max(-gold_cap_loss, min(gold_cap_gain, events["gold"]))
+    if gold > 0:
+        player.gold += gold
+        logs.append(f"골드 {gold}을(를) 얻었다. (소지 {player.gold})")
+    elif gold < 0:
+        actual = min(-gold, player.gold)
+        player.gold -= actual
+        if actual > 0:
+            logs.append(f"골드 {actual}을(를) 잃었다. (소지 {player.gold})")
+
+    hp_cap = player.level * 5
+    hp = max(-hp_cap, min(hp_cap, events["hp"]))
+    if hp > 0:
+        player.heal(hp)
+        logs.append(f"체력을 {hp} 회복했다. ({player.hp}/{player.max_hp})")
+    elif hp < 0:
+        player.hp = max(1, player.hp + hp)  # 서사로는 죽지 않음
+        logs.append(f"체력이 {-hp} 줄었다. ({player.hp}/{player.max_hp})")
+
+    if events["item_name"] and len(events["item_name"]) <= 24:
+        kind = events["item_kind"]
+        item = None
+        if kind == "potion":
+            item = create_item(_potion_for_level(player.level))
+        elif kind in ("weapon", "armor"):
+            level = max(1, int(player.level * 0.7))  # 전투 전리품보다 약간 약하게
+            if kind == "weapon":
+                bonus = max(1, int(level * 1.1))
+                effect = {"attack_bonus": bonus}
+                price = int(bonus * (7 + bonus * 1.3))
+                item_type = ItemType.WEAPON
+            else:
+                bonus = max(1, int(level * 0.9))
+                effect = {"defense_bonus": bonus}
+                price = int(bonus * (20 + bonus * 2.6))
+                item_type = ItemType.ARMOR
+            item = Item(
+                id=f"dyn_{kind}_{uuid.uuid4().hex[:8]}",
+                name=events["item_name"],
+                description="이야기 속에서 발견한 물건.",
+                item_type=item_type,
+                effect=effect,
+                quantity=1,
+                price=price
+            )
+
+        if item and player.inventory.add_item(item):
+            logs.append(f"획득: {item.name}")
+
+    if logs:
+        player.add_history("시스템", " / ".join(logs))
+
+    return logs
+
+
 @app.post("/api/game/action")
 async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks):
     player = load_player_state()
@@ -916,6 +1188,11 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
     if special_event:
         player.add_history("시스템", special_event)
 
+    # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
+    event_logs = []
+    if USE_AI_GENERATION:
+        event_logs = await _apply_story_events(player, narrative)
+
     # 대화가 쌓이면 오래된 부분을 백그라운드에서 요약에 병합
     _maybe_compress_memory(player, background_tasks)
 
@@ -926,6 +1203,8 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
         "player": player.dict(),
     }
 
+    if event_logs:
+        response_data["event_logs"] = event_logs
     if special_event:
         response_data["special_event"] = special_event
 
@@ -958,6 +1237,11 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
         if special_event:
             player.add_history("시스템", special_event)
 
+        # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
+        event_logs = []
+        if USE_AI_GENERATION:
+            event_logs = await _apply_story_events(player, full_narrative)
+
         _maybe_compress_memory(player, background_tasks)
         save_player_state(player)
 
@@ -966,6 +1250,8 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
             "narrative": full_narrative,
             "player": player.dict(),
         }
+        if event_logs:
+            done_payload["event_logs"] = event_logs
         if special_event:
             done_payload["special_event"] = special_event
 
@@ -1063,6 +1349,25 @@ async def use_item(item_id: str):
         "message": f"{item.name}을(를) 사용했습니다",
         "player": player.dict()
     }
+
+
+@app.get("/api/ollama/models")
+async def ollama_models():
+    """설치된 Ollama 모델 목록 + 현재 사용 중인 모델"""
+    models = await ollama.list_models()
+    return {"models": models, "current": ollama.model}
+
+
+@app.post("/api/ollama/model")
+async def set_ollama_model(name: str):
+    """사용할 모델 변경 (서버 재시작 시 초기화 - 영구 변경은 OLLAMA_MODEL 환경변수)"""
+    models = await ollama.list_models()
+    if models and name not in models:
+        raise HTTPException(status_code=400, detail=f"설치되지 않은 모델입니다: {name}")
+
+    ollama.model = name
+    logger.info("모델 변경: %s", name)
+    return {"message": f"모델을 {name}(으)로 변경했습니다", "current": name}
 
 
 @app.post("/api/player/update-name")

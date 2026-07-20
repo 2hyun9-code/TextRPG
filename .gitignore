@@ -39,6 +39,9 @@ ENV/
 
 # Game saves
 backend/player_state.json
+backend/player_state.backup.json
+backend/player_state.json.tmp
+backend/save_slot_*.json
 backend/saves/
 
 # Environment variables

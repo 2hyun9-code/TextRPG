@@ -73,6 +73,16 @@
 
                     <div class="hp-bar-container">
                         <div class="hp-bar-label">
+                            <span>정신력</span>
+                            <span id="mpValue">30/30</span>
+                        </div>
+                        <div class="hp-bar">
+                            <div class="hp-bar-fill mp-bar-fill" id="mpBarFill" style="width: 100%"></div>
+                        </div>
+                    </div>
+
+                    <div class="hp-bar-container">
+                        <div class="hp-bar-label">
                             <span>경험치</span>
                             <span id="xpValue">0/100</span>
                         </div>
@@ -137,8 +147,10 @@
                             <div class="hp-bar-fill" id="enemyHpBarFill" style="width: 100%"></div>
                         </div>
                     </div>
+                    <div class="status-effects" id="statusEffects"></div>
                     <div class="combat-actions">
                         <button id="attackBtn" class="btn btn-primary">공격</button>
+                        <button id="skillBtn" class="btn btn-primary">스킬</button>
                         <button id="fleeBtn" class="btn btn-secondary">도망</button>
                     </div>
                 </div>
@@ -285,6 +297,16 @@
                 <div class="setting-group">
                     <button id="testOllamaBtn" class="btn btn-secondary">Ollama 연결 테스트</button>
                     <div id="ollamaStatus" class="status-message"></div>
+                </div>
+                <div class="setting-group">
+                    <label for="modelSelect">AI 모델:</label>
+                    <select id="modelSelect"></select>
+                    <button id="applyModelBtn" class="btn btn-primary">적용</button>
+                    <p class="hint">서버 재시작 시 초기화됩니다. 영구 변경은 OLLAMA_MODEL 환경변수 사용.</p>
+                </div>
+                <div class="setting-group">
+                    <label>저장 슬롯:</label>
+                    <div id="saveSlotList" class="save-slot-list"></div>
                 </div>
             </div>
         </div>

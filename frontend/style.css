@@ -457,6 +457,71 @@ body {
     font-style: italic;
 }
 
+/* 정신력 바 (체력 바와 동일한 톤, 점선 무늬로 구분) */
+.mp-bar-fill {
+    background: repeating-linear-gradient(
+        45deg,
+        #ffffff,
+        #ffffff 4px,
+        #999999 4px,
+        #999999 8px
+    );
+}
+
+/* 상태 이상 표시 */
+.status-effects {
+    color: #cccccc;
+    font-size: 0.85rem;
+    margin: 0.4rem 0;
+    min-height: 1em;
+}
+
+/* 저장 슬롯 */
+.save-slot-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.save-slot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ffffff;
+    border-radius: 4px;
+    gap: 0.5rem;
+}
+
+.save-slot-info {
+    color: #ffffff;
+    font-size: 0.85rem;
+    flex: 1;
+}
+
+.save-slot-info .save-slot-time {
+    color: #888888;
+    font-size: 0.75rem;
+}
+
+.save-slot-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+/* 모델 선택 */
+#modelSelect {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: #000000;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    border-radius: 4px;
+    margin: 0.4rem 0;
+    font-family: inherit;
+}
+
 .equipment-slots {
     display: grid;
     grid-template-columns: 1fr 1fr;

@@ -1,10 +1,12 @@
-const API_BASE_URL = 'http://localhost:8000/api';
+// 상대 경로 사용: 어떤 도메인/IP로 접속하든 그 주소의 API를 그대로 호출
+const API_BASE_URL = '/api';
 
 let currentPlayer = null;
 let gameState = {
     isLoading: false,
     messageHistory: [],
-    storyArchive: []
+    storyArchive: [],
+    restLocations: new Set(['교차로 마을'])  // can_rest 지역 (loadLocations에서 갱신)
 };
 
 const elements = {
@@ -70,6 +72,13 @@ const elements = {
     ollamaUrlInput: document.getElementById('ollamaUrlInput'),
     testOllamaBtn: document.getElementById('testOllamaBtn'),
     ollamaStatus: document.getElementById('ollamaStatus'),
+    mpValue: document.getElementById('mpValue'),
+    mpBarFill: document.getElementById('mpBarFill'),
+    skillBtn: document.getElementById('skillBtn'),
+    statusEffects: document.getElementById('statusEffects'),
+    modelSelect: document.getElementById('modelSelect'),
+    applyModelBtn: document.getElementById('applyModelBtn'),
+    saveSlotList: document.getElementById('saveSlotList'),
 };
 
 async function initializeGame() {
@@ -318,6 +327,11 @@ async function submitAction() {
                     currentPlayer = event.player;
                     finalizeStreamedMessage(event.narrative);
 
+                    // 서사에서 추출된 실제 상태 변화 (골드/체력/아이템)
+                    if (event.event_logs) {
+                        event.event_logs.forEach(log => addEventMessage(log));
+                    }
+
                     if (event.special_event) {
                         addEventMessage(event.special_event);
                     }
@@ -358,6 +372,12 @@ function updateUI() {
     const hpPercent = Math.max(0, (currentPlayer.hp / currentPlayer.max_hp) * 100);
     elements.hpBarFill.style.width = hpPercent + '%';
 
+    // 정신력 (스킬 자원)
+    const maxMp = currentPlayer.max_mp || 30;
+    const mp = currentPlayer.mp ?? maxMp;
+    elements.mpValue.textContent = `${mp}/${maxMp}`;
+    elements.mpBarFill.style.width = Math.max(0, (mp / maxMp) * 100) + '%';
+
     // 백엔드에서 계산된 스탯 사용 (직업 보너스 + 장비 보너스 포함)
     elements.playerAttack.textContent = currentPlayer.effective_attack ?? currentPlayer.attack;
     elements.playerDefense.textContent = currentPlayer.effective_defense ?? currentPlayer.defense;
@@ -378,8 +398,8 @@ function updateUI() {
     elements.statsDeaths.textContent = currentPlayer.stats_deaths ?? 0;
     elements.statsQuests.textContent = currentPlayer.stats_quests_completed ?? 0;
 
-    // 여관 버튼은 마을에서만 표시
-    elements.restBtn.style.display = currentPlayer.location === '교차로 마을' ? 'block' : 'none';
+    // 여관 버튼은 휴식 가능 지역에서만 표시 (지역 데이터 기반)
+    elements.restBtn.style.display = gameState.restLocations.has(currentPlayer.location) ? 'block' : 'none';
 
     updateCombatPanel();
     updateEquipmentSlots();
@@ -400,6 +420,21 @@ function updateCombatPanel() {
         elements.enemyHpBarFill.style.width = enemyHpPercent + '%';
         elements.actionInput.disabled = true;
         elements.submitBtn.disabled = true;
+
+        // 스킬 버튼: 이름 + 소모 정신력, 부족하면 비활성
+        const skill = currentPlayer.skill;
+        if (skill) {
+            elements.skillBtn.textContent = `${skill.name} (${skill.mp_cost})`;
+            elements.skillBtn.disabled = (currentPlayer.mp ?? 0) < skill.mp_cost;
+            elements.skillBtn.title = skill.description;
+        }
+
+        // 상태 이상 표시
+        const effects = currentPlayer.status_effects || [];
+        const effectNames = { poison: '중독', stun: '기절' };
+        elements.statusEffects.textContent = effects.length > 0
+            ? '상태: ' + effects.map(e => `${effectNames[e.type] || e.type} ${e.turns}턴`).join(', ')
+            : '';
     } else {
         elements.combatSection.classList.add('hidden');
         elements.huntSection.classList.remove('hidden');
@@ -436,6 +471,7 @@ async function combatAction(endpoint) {
     if (gameState.isLoading) return;
     gameState.isLoading = true;
     elements.attackBtn.disabled = true;
+    elements.skillBtn.disabled = true;
     elements.fleeBtn.disabled = true;
 
     try {
@@ -461,7 +497,7 @@ async function combatAction(endpoint) {
         gameState.isLoading = false;
         elements.attackBtn.disabled = false;
         elements.fleeBtn.disabled = false;
-        updateCombatPanel();
+        updateCombatPanel();  // 스킬 버튼 활성화 여부는 여기서 MP 기준으로 재계산
     }
 }
 
@@ -726,6 +762,11 @@ async function loadLocations() {
         const response = await fetch(`${API_BASE_URL}/game/locations`);
         const data = await response.json();
 
+        // 휴식 가능 지역 갱신 (여관 버튼 표시에 사용)
+        gameState.restLocations = new Set(
+            data.locations.filter(loc => loc.can_rest).map(loc => loc.name)
+        );
+
         elements.travelList.innerHTML = data.locations.map(loc => `
             <div class="travel-item ${loc.current ? 'current' : ''}" ${loc.current ? '' : `data-travel="${loc.name}"`}>
                 <span class="travel-item-name">${loc.name}${loc.current ? ' (현재)' : ''}</span>
@@ -898,6 +939,134 @@ async function startNewGame() {
 function openSettings() {
     elements.playerNameInput.value = currentPlayer.name;
     elements.settingsModal.classList.remove('hidden');
+    loadModelList();
+    loadSaveSlots();
+}
+
+// ===== AI 모델 선택 =====
+
+async function loadModelList() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/ollama/models`);
+        const data = await response.json();
+
+        if (data.models.length === 0) {
+            elements.modelSelect.innerHTML = '<option value="">모델 목록을 불러올 수 없음 (Ollama 확인)</option>';
+            return;
+        }
+
+        elements.modelSelect.innerHTML = data.models.map(m =>
+            `<option value="${m}" ${m === data.current ? 'selected' : ''}>${m}${m === data.current ? ' (사용 중)' : ''}</option>`
+        ).join('');
+    } catch (error) {
+        console.error('Error loading models:', error);
+        elements.modelSelect.innerHTML = '<option value="">불러오기 실패</option>';
+    }
+}
+
+async function applyModel() {
+    const name = elements.modelSelect.value;
+    if (!name) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/ollama/model?name=${encodeURIComponent(name)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        addSystemMessage(data.message);
+        loadModelList();
+    } catch (error) {
+        console.error('Error applying model:', error);
+        addSystemMessage('모델 변경 실패: ' + error.message);
+    }
+}
+
+// ===== 저장 슬롯 =====
+
+async function loadSaveSlots() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/saves`);
+        const data = await response.json();
+
+        elements.saveSlotList.innerHTML = data.slots.map(s => {
+            let info;
+            if (s.corrupted) {
+                info = '<span class="save-slot-info">손상된 데이터</span>';
+            } else if (s.exists) {
+                const time = s.saved_at ? s.saved_at.replace('T', ' ') : '';
+                info = `<div class="save-slot-info">Lv.${s.level} ${s.job} - ${s.location}<div class="save-slot-time">${time}</div></div>`;
+            } else {
+                info = '<span class="save-slot-info">빈 슬롯</span>';
+            }
+
+            return `
+                <div class="save-slot">
+                    <span class="save-slot-info">슬롯 ${s.slot}</span>
+                    ${info}
+                    <div class="save-slot-actions">
+                        <button class="btn btn-small" data-save-slot="${s.slot}">저장</button>
+                        ${s.exists && !s.corrupted ? `<button class="btn btn-small" data-load-slot="${s.slot}">불러오기</button>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        document.querySelectorAll('[data-save-slot]').forEach(btn => {
+            btn.addEventListener('click', () => saveToSlot(parseInt(btn.dataset.saveSlot)));
+        });
+        document.querySelectorAll('[data-load-slot]').forEach(btn => {
+            btn.addEventListener('click', () => loadFromSlot(parseInt(btn.dataset.loadSlot)));
+        });
+    } catch (error) {
+        console.error('Error loading save slots:', error);
+        elements.saveSlotList.innerHTML = '<div class="empty-message">슬롯 정보를 불러올 수 없습니다</div>';
+    }
+}
+
+async function saveToSlot(slot) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/saves/save?slot=${slot}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        addSystemMessage(data.message);
+        loadSaveSlots();
+    } catch (error) {
+        console.error('Error saving to slot:', error);
+        addSystemMessage('저장 실패: ' + error.message);
+    }
+}
+
+async function loadFromSlot(slot) {
+    if (!confirm(`슬롯 ${slot}을 불러오시겠습니까? 현재 진행은 사라집니다. (필요하면 먼저 다른 슬롯에 저장하세요)`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/saves/load?slot=${slot}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        // 불러온 상태로 화면 전체 재구성 (대화 복원 포함)
+        location.reload();
+    } catch (error) {
+        console.error('Error loading from slot:', error);
+        addSystemMessage('불러오기 실패: ' + error.message);
+    }
 }
 
 function closeSettings() {
@@ -927,21 +1096,23 @@ async function savePlayerName() {
 }
 
 async function testOllamaConnection() {
+    // 브라우저가 아닌 게임 서버 기준으로 Ollama 상태를 확인 (백엔드 프록시 경유)
     const status = elements.ollamaStatus;
     status.textContent = '연결 테스트 중...';
     status.className = 'status-message';
 
     try {
-        const response = await fetch('http://localhost:11434/api/tags');
-        if (response.ok) {
-            status.textContent = 'Ollama이 실행 중이고 접근 가능합니다!';
+        const response = await fetch(`${API_BASE_URL}/ollama/models`);
+        const data = await response.json();
+        if (response.ok && data.models && data.models.length > 0) {
+            status.textContent = `Ollama 연결됨. 사용 중: ${data.current} (설치된 모델: ${data.models.join(', ')})`;
             status.className = 'status-message success';
         } else {
-            status.textContent = 'Ollama이 응답했지만 오류가 있습니다.';
+            status.textContent = '서버의 Ollama에 연결할 수 없습니다.';
             status.className = 'status-message error';
         }
     } catch (error) {
-        status.textContent = `Ollama에 연결할 수 없습니다. 실행 중인지 확인하세요: 'ollama serve'`;
+        status.textContent = '서버 연결 오류: ' + error.message;
         status.className = 'status-message error';
     }
 }
@@ -962,7 +1133,9 @@ function setupEventListeners() {
 
     elements.huntBtn.addEventListener('click', startCombat);
     elements.attackBtn.addEventListener('click', () => combatAction('attack'));
+    elements.skillBtn.addEventListener('click', () => combatAction('skill'));
     elements.fleeBtn.addEventListener('click', () => combatAction('flee'));
+    elements.applyModelBtn.addEventListener('click', applyModel);
     elements.restBtn.addEventListener('click', restAtInn);
 
     elements.questBoardBtn.addEventListener('click', openQuestBoard);
