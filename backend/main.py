@@ -50,6 +50,11 @@ BOSS_CHANCE = 0.10        # 사냥 시 보스 조우 확률
 BOSS_LEVEL_OFFSET = 2     # 보스 레벨 = 플레이어 레벨 + 2
 BOSS_MIN_PLAYER_LEVEL = 3  # 이 레벨 미만에서는 보스 미등장 (초반 보호)
 
+# 행동 한 번에 AI를 여러 번 호출하면(서사+퀘스트훅+이벤트추출) 느린 하드웨어에서
+# 응답이 크게 늘어지므로, 두 부가 기능은 매 턴이 아닌 확률적으로만 실행한다.
+SPECIAL_EVENT_CHANCE = 0.20  # 지도 소지 시 퀘스트 훅이 뜰 확률
+STORY_EVENT_CHANCE = 0.40    # 서사 속 골드/체력/아이템 변화를 반영 시도할 확률
+
 app = FastAPI(title="Text RPG")
 
 
@@ -1216,7 +1221,10 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
 
     narrative = await ollama.generate_narrative(player, action.action)
 
-    special_event = await ollama.generate_special_event(player)
+    # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행
+    special_event = None
+    if random.random() < SPECIAL_EVENT_CHANCE:
+        special_event = await ollama.generate_special_event(player)
 
     # 단기 기억에 기록 (다음 턴부터 AI가 이 대화를 참조)
     player.add_history("플레이어", action.action)
@@ -1226,7 +1234,7 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
 
     # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
     event_logs = []
-    if USE_AI_GENERATION:
+    if USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
         event_logs = await _apply_story_events(player, narrative)
 
     # 대화가 쌓이면 오래된 부분을 백그라운드에서 요약에 병합
@@ -1266,7 +1274,10 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
             full_narrative += chunk
             yield json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False) + "\n"
 
-        special_event = await ollama.generate_special_event(player)
+        # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행
+        special_event = None
+        if random.random() < SPECIAL_EVENT_CHANCE:
+            special_event = await ollama.generate_special_event(player)
 
         player.add_history("플레이어", action.action)
         player.add_history("나레이터", full_narrative)
@@ -1275,7 +1286,7 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
 
         # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
         event_logs = []
-        if USE_AI_GENERATION:
+        if USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
             event_logs = await _apply_story_events(player, full_narrative)
 
         _maybe_compress_memory(player, background_tasks)
