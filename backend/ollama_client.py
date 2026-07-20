@@ -91,11 +91,7 @@ class OllamaClient:
 6. 가능한 다음 행동을 제안하되 강요하지 마세요
 7. 이야기 요약에 담긴 목표와 사건을 자연스럽게 이어가세요. 단, 플레이어가 다른 길을 선택하면 그 선택을 존중하고 이야기를 그 방향으로 전개하세요
 
-★★★ 언어 규칙 (반드시 지킬 것) ★★★
-- 반드시 100% 한국어로만 응답하세요.
-- 영어 단어, 알파벳, 로마자 표기를 단 한 글자도 섞지 마세요 (예: "OK", "quest", "damage" 같은 단어 금지).
-- 적절한 한국어 표현이 바로 떠오르지 않아도 절대 영어를 쓰지 말고, 반드시 자연스러운 한국어 문장으로 바꾸어 표현하세요.
-- 응답 전체를 한국어로 다 쓴 뒤, 영어 단어가 하나라도 섞여 있는지 스스로 점검하고 있다면 한국어로 고쳐서 최종 답변하세요."""
+언어 규칙: 반드시 100% 한국어로만 응답하세요. 영어 단어나 알파벳을 단 한 글자도 섞지 마세요."""
 
     def _format_inventory(self, player_state: PlayerState) -> str:
         if not player_state.inventory.items:
@@ -133,9 +129,9 @@ class OllamaClient:
                     "prompt": prompt,
                     "stream": False,
                     # 출력 길이를 못박아 응답 시간의 상한을 보장 (지시문의 "2-3문장"과 일치)
-                    "options": {"num_predict": 150},
+                    "options": {"num_predict": 100},
                 },
-                timeout=45.0
+                timeout=60.0
             )
             response.raise_for_status()
             result = response.json()
@@ -167,9 +163,9 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {"num_predict": 150},
+                    "options": {"num_predict": 100},
                 },
-                timeout=45.0
+                timeout=60.0
             ) as response:
                 response.raise_for_status()
                 got_any = False

@@ -1220,10 +1220,12 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
         raise HTTPException(status_code=400, detail="전투 중에는 행동할 수 없습니다. 공격 또는 도망 버튼을 사용하세요.")
 
     narrative = await ollama.generate_narrative(player, action.action)
+    narrative_ok = not narrative.startswith("[")  # 폴백 오류 메시지는 대괄호로 시작
 
-    # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행
+    # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행.
+    # 서사 생성이 이미 실패(시간 초과 등)했다면 추가 호출로 지연을 더 쌓지 않는다.
     special_event = None
-    if random.random() < SPECIAL_EVENT_CHANCE:
+    if narrative_ok and random.random() < SPECIAL_EVENT_CHANCE:
         special_event = await ollama.generate_special_event(player)
 
     # 단기 기억에 기록 (다음 턴부터 AI가 이 대화를 참조)
@@ -1234,7 +1236,7 @@ async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks
 
     # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
     event_logs = []
-    if USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
+    if narrative_ok and USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
         event_logs = await _apply_story_events(player, narrative)
 
     # 대화가 쌓이면 오래된 부분을 백그라운드에서 요약에 병합
@@ -1274,9 +1276,12 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
             full_narrative += chunk
             yield json.dumps({"type": "chunk", "text": chunk}, ensure_ascii=False) + "\n"
 
-        # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행
+        narrative_ok = not full_narrative.startswith("[")
+
+        # 매 턴 AI를 여러 번 부르면 느려지므로 부가 기능은 확률적으로만 실행.
+        # 서사 생성이 이미 실패(시간 초과 등)했다면 추가 호출로 지연을 더 쌓지 않는다.
         special_event = None
-        if random.random() < SPECIAL_EVENT_CHANCE:
+        if narrative_ok and random.random() < SPECIAL_EVENT_CHANCE:
             special_event = await ollama.generate_special_event(player)
 
         player.add_history("플레이어", action.action)
@@ -1286,7 +1291,7 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
 
         # 서사에서 상태 변화 추출 및 적용 (AI 제안, 코드가 범위 강제)
         event_logs = []
-        if USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
+        if narrative_ok and USE_AI_GENERATION and random.random() < STORY_EVENT_CHANCE:
             event_logs = await _apply_story_events(player, full_narrative)
 
         _maybe_compress_memory(player, background_tasks)
