@@ -132,8 +132,10 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    # 출력 길이를 못박아 응답 시간의 상한을 보장 (지시문의 "2-3문장"과 일치)
+                    "options": {"num_predict": 150},
                 },
-                timeout=30.0
+                timeout=45.0
             )
             response.raise_for_status()
             result = response.json()
@@ -165,8 +167,9 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": True,
+                    "options": {"num_predict": 150},
                 },
-                timeout=30.0
+                timeout=45.0
             ) as response:
                 response.raise_for_status()
                 got_any = False
@@ -236,6 +239,7 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    "options": {"num_predict": 200},
                 }
             )
             response.raise_for_status()
@@ -408,6 +412,7 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    "options": {"num_predict": 100},
                 }
             )
             response.raise_for_status()
