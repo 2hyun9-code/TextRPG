@@ -117,6 +117,7 @@ class PlayerState(BaseModel):
     stats_quests_completed: int = 0
     # 상태 이상: [{"type": "poison"|"stun", "turns": 남은 턴}]
     status_effects: List[Dict[str, Any]] = Field(default_factory=list)
+    is_game_over: bool = False  # 사망 후 "다시하기" 대기 상태
 
     def add_history(self, role: str, content: str) -> None:
         """대화 기록 추가 (단기 기억)"""

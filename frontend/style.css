@@ -310,6 +310,18 @@ body {
     width: 100%;
 }
 
+/* 게임 오버 */
+.game-over-section {
+    padding: 1rem;
+    border: 2px solid #ffffff;
+    text-align: center;
+}
+
+.game-over-text {
+    color: #cccccc;
+    margin-bottom: 0.75rem;
+}
+
 /* 상점 */
 .shop-modal-content {
     max-width: 600px;

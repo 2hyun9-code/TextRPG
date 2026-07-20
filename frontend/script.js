@@ -78,6 +78,8 @@ const elements = {
     modelSelect: document.getElementById('modelSelect'),
     applyModelBtn: document.getElementById('applyModelBtn'),
     saveSlotList: document.getElementById('saveSlotList'),
+    gameOverSection: document.getElementById('gameOverSection'),
+    restartBtn: document.getElementById('restartBtn'),
 };
 
 async function initializeGame() {
@@ -86,7 +88,11 @@ async function initializeGame() {
         const data = await response.json();
         currentPlayer = data.player;
 
-        if (!currentPlayer.job_selected) {
+        if (currentPlayer.is_game_over) {
+            restoreChatHistory();
+            addSystemMessage("당신은 쓰러졌습니다... 다시하기 버튼을 눌러 새로운 모험을 시작하세요.");
+            updateUI();
+        } else if (!currentPlayer.job_selected) {
             await showJobSelectionModal();
         } else {
             restoreChatHistory();
@@ -407,6 +413,16 @@ function updateUI() {
 }
 
 function updateCombatPanel() {
+    if (currentPlayer.is_game_over) {
+        elements.combatSection.classList.add('hidden');
+        elements.huntSection.classList.add('hidden');
+        elements.gameOverSection.classList.remove('hidden');
+        elements.actionInput.disabled = true;
+        elements.submitBtn.disabled = true;
+        return;
+    }
+    elements.gameOverSection.classList.add('hidden');
+
     const enemy = currentPlayer.current_enemy;
 
     if (enemy) {
@@ -958,6 +974,26 @@ async function startNewGame() {
     }
 }
 
+async function restartAfterDeath() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/game/restart`, { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            addSystemMessage(`오류: ${data.detail}`);
+            return;
+        }
+
+        currentPlayer = data.player;
+        addSystemMessage(data.message);
+        elements.gameOverSection.classList.add('hidden');
+        await showJobSelectionModal();
+    } catch (error) {
+        console.error('Error restarting after death:', error);
+        addSystemMessage('다시하기 오류: ' + error.message);
+    }
+}
+
 function openSettings() {
     elements.playerNameInput.value = currentPlayer.name;
     elements.settingsModal.classList.remove('hidden');
@@ -1146,6 +1182,7 @@ function setupEventListeners() {
     });
 
     elements.newGameBtn.addEventListener('click', startNewGame);
+    elements.restartBtn.addEventListener('click', restartAfterDeath);
     elements.settingsBtn.addEventListener('click', openSettings);
     elements.closeSettingsBtn.addEventListener('click', closeSettings);
     elements.saveNameBtn.addEventListener('click', savePlayerName);

@@ -246,6 +246,35 @@ async def new_game():
     return {"player": player.dict(), "message": "새 게임이 시작되었습니다!"}
 
 
+@app.post("/api/game/restart")
+async def restart_after_death():
+    """사망 후 재시작: 능력/재화/장비는 전부 초기화하지만,
+    이야기 기억(대화 요약/최근 대화)과 누적 기록은 그대로 이어간다.
+    -> 같은 세계관 기억 위에서 매번 다른 이야기를 새로 플레이할 수 있다.
+    """
+    player = load_player_state()
+
+    if not player.is_game_over:
+        raise HTTPException(status_code=400, detail="아직 게임 오버 상태가 아닙니다")
+
+    new_player = create_new_game()
+    new_player.recent_history = player.recent_history
+    new_player.story_summary = player.story_summary
+    new_player.pending_summary = player.pending_summary
+    new_player.stats_kills = player.stats_kills
+    new_player.stats_deaths = player.stats_deaths
+    new_player.stats_quests_completed = player.stats_quests_completed
+    new_player.completed_quests = player.completed_quests
+
+    new_player.add_history("시스템", "새로운 모험가로 다시 태어났다. 이전 삶의 기억이 어렴풋이 남아 있다.")
+
+    save_player_state(new_player)
+    return {
+        "message": "다시 시작합니다. 새로운 직업을 선택하세요.",
+        "player": new_player.dict()
+    }
+
+
 # ===== 저장 슬롯 (3개) =====
 
 SAVE_SLOTS = 3
@@ -341,7 +370,13 @@ async def select_job(job: str):
     # 나레이터는 이 전제에서 이야기를 시작하고, 이후 플레이어의
     # 선택이 요약에 병합되며 매번 다른 이야기로 갈라진다.
     prologue = get_prologue(job)
-    player.story_summary = get_seed_summary(player.name, job)
+    seed = get_seed_summary(player.name, job)
+    if player.story_summary:
+        # 사망 후 재시작: 이전 삶의 기억은 지우지 않고 새 서장을 이어붙인다
+        # (같은 기억에서 출발하지만 선택이 쌓이며 매번 다른 이야기가 된다)
+        player.story_summary = f"{player.story_summary}\n\n[새로운 삶] {seed}"
+    else:
+        player.story_summary = seed
     player.add_history("나레이터", prologue[2])  # 촌장의 부탁 장면을 단기 기억에도 기록
 
     save_player_state(player)
@@ -444,18 +479,25 @@ def _maybe_compress_memory(player: PlayerState, background_tasks: BackgroundTask
         background_tasks.add_task(_merge_pending_summary)
 
 
+def _require_alive(player: PlayerState) -> None:
+    """게임 오버 상태에서는 재시작 전까지 어떤 플레이 행동도 막는다"""
+    if player.is_game_over:
+        raise HTTPException(status_code=400, detail="게임 오버 상태입니다. '다시하기'로 새로 시작하세요.")
+
+
 def _handle_defeat(player: PlayerState, logs: list) -> None:
-    """사망 처리: 골드 10% 손실 후 마을에서 부활"""
+    """사망 처리: 페널티로 봐주지 않고 완전한 게임 오버로 전환.
+
+    부활/구제 없음 - 이 모험은 여기서 끝나고, 플레이어가 "다시하기"를
+    눌러야 (/api/game/restart) 능력/재화 없이 새 인물로 다시 시작한다.
+    """
     enemy_name = player.current_enemy.name if player.current_enemy else "적"
-    lost_gold = player.gold // 10
-    player.gold -= lost_gold
-    player.hp = max(1, player.max_hp // 2)
-    player.location = "교차로 마을"
     player.current_enemy = None
     player.stats_deaths += 1
     player.clear_status()
-    logs.append(f"쓰러졌다... 골드 {lost_gold}을(를) 잃고 교차로 마을에서 눈을 떴다.")
-    player.add_history("시스템", f"{enemy_name}에게 패배해 교차로 마을에서 다시 눈을 떴다.")
+    player.is_game_over = True
+    logs.append(f"{enemy_name}에게 쓰러졌다... 당신의 모험은 여기서 끝났다.")
+    player.add_history("시스템", f"{enemy_name}에게 패배하여 숨을 거두었다.")
 
 
 @app.get("/api/game/locations")
@@ -475,6 +517,7 @@ async def get_locations():
 @app.post("/api/game/travel")
 async def travel(location: str):
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 이동할 수 없습니다")
@@ -502,6 +545,7 @@ async def travel(location: str):
 @app.post("/api/game/rest")
 async def rest_at_inn():
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 쉴 수 없습니다")
@@ -598,6 +642,7 @@ async def quest_available():
 @app.post("/api/quest/accept")
 async def quest_accept(quest_id: str):
     player = load_player_state()
+    _require_alive(player)
 
     if len(player.active_quests) >= MAX_ACTIVE_QUESTS:
         raise HTTPException(status_code=400, detail=f"퀘스트는 최대 {MAX_ACTIVE_QUESTS}개까지 수락할 수 있습니다")
@@ -731,6 +776,7 @@ def _update_explore_progress(player: PlayerState, logs: list) -> None:
 @app.post("/api/combat/start")
 async def start_combat():
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="이미 전투 중입니다")
@@ -1112,6 +1158,7 @@ async def shop_list():
 @app.post("/api/shop/buy")
 async def shop_buy(item_id: str):
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 상점을 이용할 수 없습니다")
@@ -1142,6 +1189,7 @@ async def shop_buy(item_id: str):
 @app.post("/api/shop/sell")
 async def shop_sell(item_id: str):
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 상점을 이용할 수 없습니다")
@@ -1239,6 +1287,7 @@ async def _apply_story_events(player: PlayerState, narrative: str) -> list:
 @app.post("/api/game/action")
 async def perform_action(action: PlayerAction, background_tasks: BackgroundTasks):
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 행동할 수 없습니다. 공격 또는 도망 버튼을 사용하세요.")
@@ -1290,6 +1339,7 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
     - {"type": "done", "narrative": "...", "player": {...}, "special_event": "..."}  완료 시 1회
     """
     player = load_player_state()
+    _require_alive(player)
 
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 행동할 수 없습니다. 공격 또는 도망 버튼을 사용하세요.")
@@ -1339,6 +1389,7 @@ async def perform_action_stream(action: PlayerAction, background_tasks: Backgrou
 @app.post("/api/inventory/equip")
 async def equip_item(item_id: str):
     player = load_player_state()
+    _require_alive(player)
 
     item = next((i for i in player.inventory.items if i.id == item_id), None)
     if not item:
@@ -1377,6 +1428,7 @@ async def equip_item(item_id: str):
 @app.post("/api/inventory/unequip")
 async def unequip_item(slot: str):
     player = load_player_state()
+    _require_alive(player)
 
     if slot == "weapon":
         if not player.equipment.weapon:
@@ -1404,6 +1456,7 @@ async def unequip_item(slot: str):
 @app.post("/api/inventory/use")
 async def use_item(item_id: str):
     player = load_player_state()
+    _require_alive(player)
 
     item = next((i for i in player.inventory.items if i.id == item_id), None)
     if not item:
