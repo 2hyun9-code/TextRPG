@@ -89,14 +89,20 @@ class OllamaClient:
 4. 플레이어가 지도를 가지고 있으면 가끔 새로운 지역 탐험을 제안하세요
 5. 매력적이고 몰입감 있게 하세요
 6. 가능한 다음 행동을 제안하되 강요하지 마세요
-7. 이야기 요약에 담긴 목표와 사건을 자연스럽게 이어가세요. 단, 플레이어가 다른 길을 선택하면 그 선택을 존중하고 이야기를 그 방향으로 전개하세요"""
+7. 이야기 요약에 담긴 목표와 사건을 자연스럽게 이어가세요. 단, 플레이어가 다른 길을 선택하면 그 선택을 존중하고 이야기를 그 방향으로 전개하세요
+
+★★★ 언어 규칙 (반드시 지킬 것) ★★★
+- 반드시 100% 한국어로만 응답하세요.
+- 영어 단어, 알파벳, 로마자 표기를 단 한 글자도 섞지 마세요 (예: "OK", "quest", "damage" 같은 단어 금지).
+- 적절한 한국어 표현이 바로 떠오르지 않아도 절대 영어를 쓰지 말고, 반드시 자연스러운 한국어 문장으로 바꾸어 표현하세요.
+- 응답 전체를 한국어로 다 쓴 뒤, 영어 단어가 하나라도 섞여 있는지 스스로 점검하고 있다면 한국어로 고쳐서 최종 답변하세요."""
 
     def _format_inventory(self, player_state: PlayerState) -> str:
         if not player_state.inventory.items:
-            return "- Empty"
+            return "- 비어있음"
         return "\n".join([f"- {item.name} x{item.quantity}" for item in player_state.inventory.items])
 
-    def _format_recent_history(self, player_state: PlayerState, limit: int = 10) -> str:
+    def _format_recent_history(self, player_state: PlayerState, limit: int = 20) -> str:
         """최근 대화를 프롬프트용 텍스트로 변환 (단기 기억)"""
         if not player_state.recent_history:
             return ""
@@ -219,6 +225,7 @@ class OllamaClient:
 3. 만난 인물, 방문한 장소, 획득한 물건, 진행 중인 목표를 우선 보존하세요
 4. 5문장 이내로 압축하세요
 5. 요약문만 출력하세요 (다른 말 없이)
+6. 반드시 100% 한국어로만 작성하세요. 영어 단어나 알파벳을 단 한 글자도 섞지 마세요.
 
 갱신된 요약:"""
 
@@ -293,11 +300,14 @@ class OllamaClient:
 장소: {player_state.location}
 이야기 맥락: {story}
 
-이 장소와 이야기에 어울리는 {role} 하나를 한국어로 창작하세요.
+이 장소와 이야기에 어울리는 {role} 하나를 창작하세요.
 유명 게임의 몬스터를 그대로 복사하지 말고 새로운 존재를 만드세요.
 
+언어 규칙: name과 description 모두 반드시 100% 한국어로만 작성하세요.
+영어 단어나 알파벳을 단 한 글자도 섞지 마세요.
+
 반드시 이 JSON 형식으로만 답하세요:
-{{"name": "몬스터 이름 (2~10글자)", "description": "생김새와 분위기를 담은 한 문장"}}"""
+{{"name": "한국어 몬스터 이름 (2~10글자)", "description": "한국어로 된, 생김새와 분위기를 담은 한 문장"}}"""
 
         data = await self._generate_json(prompt)
         if not data:
@@ -322,10 +332,13 @@ class OllamaClient:
 장소: {player_state.location}
 방금 쓰러뜨린 적: {enemy_name}
 
-이 적이 남길 법한 독창적인 {kind_kr} 하나를 한국어로 창작하세요.
+이 적이 남길 법한 독창적인 {kind_kr} 하나를 창작하세요.
+
+언어 규칙: name과 description 모두 반드시 100% 한국어로만 작성하세요.
+영어 단어나 알파벳을 단 한 글자도 섞지 마세요.
 
 반드시 이 JSON 형식으로만 답하세요:
-{{"name": "{kind_kr} 이름 (2~12글자)", "description": "한 문장 묘사"}}"""
+{{"name": "한국어 {kind_kr} 이름 (2~12글자)", "description": "한국어로 된 한 문장 묘사"}}"""
 
         data = await self._generate_json(prompt)
         if not data:
@@ -356,6 +369,7 @@ class OllamaClient:
 3. 다치거나 회복했으면 hp에 숫자 (다침은 음수, 없으면 0)
 4. 물건을 획득했으면 item_name에 이름, item_kind에 "weapon"/"armor"/"potion" 중 하나 (없으면 null)
 5. 대부분의 서사에는 아무 변화가 없습니다. 확실하지 않으면 0과 null을 쓰세요.
+6. item_name은 반드시 100% 한국어로만 작성하세요. 영어 단어나 알파벳을 단 한 글자도 섞지 마세요.
 
 반드시 이 JSON 형식으로만 답하세요:
 {{"gold": 0, "hp": 0, "item_name": null, "item_kind": null}}"""
@@ -383,7 +397,9 @@ class OllamaClient:
 플레이어: {player_state.name}, 레벨 {player_state.level}
 현재 위치: {player_state.location}
 
-플레이어의 현재 레벨과 위치에 맞는 퀘스트 훅을 생성하세요. 흥미롭지만 간결하게 하세요."""
+플레이어의 현재 레벨과 위치에 맞는 퀘스트 훅을 생성하세요. 흥미롭지만 간결하게 하세요.
+
+언어 규칙: 반드시 100% 한국어로만 작성하세요. 영어 단어나 알파벳을 단 한 글자도 섞지 마세요."""
 
         try:
             response = await self.client.post(

@@ -348,9 +348,9 @@ async def select_job(job: str):
 # 중기: story_summary -> 오래된 대화를 병합 요약해 보존
 # 장기: PlayerState (위치, 장비, 골드, 퀘스트 등)
 
-HISTORY_TRIGGER = 30           # 이 개수에 도달하면 요약 실행
-HISTORY_KEEP = 10              # 요약 후 원문으로 유지할 최근 대화 수
-MAX_HISTORY_HARD_LIMIT = 100   # 절대 상한: 요약 시스템이 고장 나도 이 이상 쌓이지 않음
+HISTORY_TRIGGER = 60           # 이 개수에 도달하면 요약 실행 (요약은 백그라운드라 응답 속도에 영향 없음)
+HISTORY_KEEP = 20              # 요약 후 원문으로 유지할 최근 대화 수 (매 턴 프롬프트에 포함되는 개수와 일치)
+MAX_HISTORY_HARD_LIMIT = 300   # 절대 상한: 요약 시스템이 고장 나도 이 이상 쌓이지 않음
 
 _summary_in_progress = False
 
@@ -373,6 +373,42 @@ async def _merge_pending_summary():
     except Exception as e:
         # pending은 그대로 유지 -> 다음 트리거나 재시작 시 자동 재시도
         logger.error("요약 병합 실패 (대기 목록 유지, 재시도 예정): %s", e)
+    finally:
+        _summary_in_progress = False
+
+
+async def force_compress_now() -> dict:
+    """매일 자정(00:00) 강제 압축: 트리거 개수(60)에 못 미쳐도 그날 대화를 전부 요약에 반영한다.
+
+    HISTORY_TRIGGER를 기다리지 않고 즉시 병합하므로, 활동이 적은 날에도
+    recent_history가 다음날로 무한정 누적되지 않고 매일 정리된다.
+    운영 서버에서는 systemd 타이머가 자정에 이 엔드포인트를 호출한다.
+    """
+    global _summary_in_progress
+
+    if _summary_in_progress:
+        return {"trimmed": 0, "merged": 0, "skipped": "이미 압축이 진행 중입니다"}
+
+    _summary_in_progress = True
+    try:
+        player = load_player_state()
+
+        trimmed = 0
+        if len(player.recent_history) > HISTORY_KEEP:
+            cut = len(player.recent_history) - HISTORY_KEEP
+            player.pending_summary.extend(player.recent_history[:cut])
+            player.recent_history = player.recent_history[cut:]
+            trimmed = cut
+
+        merged = len(player.pending_summary)
+        if merged > 0:
+            new_summary = await ollama.update_summary(player.story_summary, player.pending_summary)
+            player.story_summary = new_summary
+            player.pending_summary = []
+
+        save_player_state(player)
+        logger.info("자정 강제 압축 완료: 정리 %d개, 병합 %d개", trimmed, merged)
+        return {"trimmed": trimmed, "merged": merged}
     finally:
         _summary_in_progress = False
 
@@ -1349,6 +1385,17 @@ async def use_item(item_id: str):
         "message": f"{item.name}을(를) 사용했습니다",
         "player": player.dict()
     }
+
+
+@app.post("/api/admin/compress-memory")
+async def admin_compress_memory():
+    """자정 강제 압축 트리거 (systemd 타이머가 매일 00:00에 호출).
+
+    인증 없이 열려 있음 - 이 프로젝트는 개인용/로컬 운영 전제이며
+    호출해도 상태를 훼손하지 않고(요약 병합만 수행) 부작용이 없다.
+    """
+    result = await force_compress_now()
+    return {"message": "기억 압축 완료", **result}
 
 
 @app.get("/api/ollama/models")
