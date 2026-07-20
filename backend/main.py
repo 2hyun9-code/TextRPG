@@ -15,9 +15,12 @@ from models import (
     AIResponse, GameMessage, JobClass, Enemy, Quest
 )
 from ollama_client import OllamaClient
-from items_db import ITEMS_DB, SHOP_STOCK, create_item, get_item_price
+from items_db import (
+    ITEMS_DB, SHOP_STOCK, create_item, get_item_price,
+    get_daily_stock, get_daily_special, SPECIAL_DISCOUNT
+)
 from story import get_prologue, get_seed_summary, JOB_NAMES
-from skills_db import get_skill
+from skills_db import get_available_skills, get_skill_by_id
 from enemies_db import (
     ENEMY_TEMPLATES, get_random_enemy_in_range, get_templates_in_range, roll_drop,
     build_dynamic_enemy, stat_formula_xp, stat_formula_gold
@@ -29,6 +32,8 @@ logger = logging.getLogger("textrpg.main")
 
 # AI 동적 생성 on/off (테스트 시 0으로 설정해 LLM 호출 생략)
 USE_AI_GENERATION = os.getenv("TEXTRPG_AI_GEN", "1") != "0"
+# 디버그 전용 엔드포인트 노출 여부 (배포 서버에서는 기본 비활성)
+DEBUG_ENDPOINTS_ENABLED = os.getenv("TEXTRPG_DEBUG", "0") == "1"
 
 # 지역 정의: 이야기 배경 역할 (적 강함은 지역이 아닌 플레이어 레벨에 맞춰 결정됨)
 LOCATIONS = {
@@ -964,14 +969,21 @@ async def combat_attack():
 
 
 @app.post("/api/combat/skill")
-async def combat_skill():
+async def combat_skill(skill_id: str = None):
     player = load_player_state()
     enemy = player.current_enemy
 
     if not enemy:
         raise HTTPException(status_code=400, detail="전투 중이 아닙니다")
 
-    skill = get_skill(player.job_class.value)
+    available = get_available_skills(player.job_class.value, player.level)
+    if skill_id:
+        skill = get_skill_by_id(player.job_class.value, player.level, skill_id)
+        if not skill:
+            raise HTTPException(status_code=400, detail="사용할 수 없는 스킬입니다")
+    else:
+        skill = available[0]  # 지정 없으면 주력 스킬 사용 (하위 호환)
+
     if player.mp < skill["mp_cost"]:
         raise HTTPException(status_code=400, detail=f"정신력이 부족합니다 (필요: {skill['mp_cost']})")
 
@@ -1062,15 +1074,24 @@ def _sell_price_of(item: Item) -> int:
 async def shop_list():
     player = load_player_state()
 
+    today_stock = get_daily_stock()
+    today_special = get_daily_special()
+
     stock = []
-    for item_id in SHOP_STOCK:
+    for item_id in today_stock:
         data = ITEMS_DB[item_id]
+        is_special = item_id == today_special
+        price = data["price"]
+        if is_special:
+            price = max(1, int(price * (1 - SPECIAL_DISCOUNT)))
         stock.append({
             "id": item_id,
             "name": data["name"],
             "description": data["description"],
             "item_type": data["item_type"].value,
-            "price": data["price"]
+            "price": price,
+            "original_price": data["price"],
+            "is_special": is_special,
         })
 
     # 판매 가능한 아이템 (특수/퀘스트 아이템 제외, 판매가 = 정가의 절반)
@@ -1095,10 +1116,13 @@ async def shop_buy(item_id: str):
     if player.current_enemy:
         raise HTTPException(status_code=400, detail="전투 중에는 상점을 이용할 수 없습니다")
 
-    if item_id not in SHOP_STOCK:
-        raise HTTPException(status_code=404, detail="상점에서 팔지 않는 아이템입니다")
+    today_stock = get_daily_stock()
+    if item_id not in today_stock:
+        raise HTTPException(status_code=404, detail="오늘 상점에서 팔지 않는 아이템입니다")
 
     price = get_item_price(item_id)
+    if item_id == get_daily_special():
+        price = max(1, int(price * (1 - SPECIAL_DISCOUNT)))
     if player.gold < price:
         raise HTTPException(status_code=400, detail="골드가 부족합니다")
 
@@ -1443,6 +1467,9 @@ async def update_player_name(name: str):
 
 @app.post("/api/debug/add-item")
 async def debug_add_item(item_id: str, name: str, quantity: int = 1):
+    if not DEBUG_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     player = load_player_state()
     new_item = Item(
         id=item_id,

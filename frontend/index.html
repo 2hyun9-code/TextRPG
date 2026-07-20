@@ -150,7 +150,7 @@
                     <div class="status-effects" id="statusEffects"></div>
                     <div class="combat-actions">
                         <button id="attackBtn" class="btn btn-primary">공격</button>
-                        <button id="skillBtn" class="btn btn-primary">스킬</button>
+                        <div class="skill-buttons" id="skillButtons"></div>
                         <button id="fleeBtn" class="btn btn-secondary">도망</button>
                     </div>
                 </div>
@@ -288,11 +288,6 @@
                     <label for="playerNameInput">플레이어 이름:</label>
                     <input type="text" id="playerNameInput" placeholder="이름을 입력하세요">
                     <button id="saveNameBtn" class="btn btn-primary">저장</button>
-                </div>
-                <div class="setting-group">
-                    <label for="ollamaUrlInput">Ollama URL:</label>
-                    <input type="text" id="ollamaUrlInput" value="http://localhost:11434" placeholder="Ollama API URL">
-                    <p class="hint">Ollama가 실행 중인지 확인하세요: <code>ollama serve</code></p>
                 </div>
                 <div class="setting-group">
                     <button id="testOllamaBtn" class="btn btn-secondary">Ollama 연결 테스트</button>

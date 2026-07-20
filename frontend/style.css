@@ -296,6 +296,12 @@ body {
     margin-top: 0.5rem;
 }
 
+.skill-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
 .hunt-section {
     padding: 0.75rem;
 }
@@ -373,6 +379,27 @@ body {
     color: #ffffff;
     font-weight: 600;
     white-space: nowrap;
+}
+
+/* 오늘의 특가 */
+.shop-item-special {
+    border: 2px solid #ffffff;
+}
+
+.special-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    border: 1px solid #ffffff;
+    border-radius: 3px;
+    padding: 0.1rem 0.35rem;
+    margin-left: 0.4rem;
+}
+
+.original-price {
+    color: #888888;
+    text-decoration: line-through;
+    font-weight: 400;
+    margin-right: 0.4rem;
 }
 
 .shop-list::-webkit-scrollbar {
@@ -590,20 +617,11 @@ body {
 }
 
 .inventory-list {
+    /* 고정 높이 대신 아이템 개수에 맞춰 자연스럽게 늘고 줄어듦.
+       전체 스크롤은 .side-panel 하나가 담당 (중첩 스크롤 제거) */
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-height: 200px;
-    overflow-y: auto;
-}
-
-.inventory-list::-webkit-scrollbar {
-    width: 4px;
-}
-
-.inventory-list::-webkit-scrollbar-thumb {
-    background: var(--accent-color);
-    border-radius: 2px;
 }
 
 .inventory-item {
@@ -652,11 +670,10 @@ body {
 }
 
 .quest-list {
+    /* 퀘스트 개수에 맞춰 자연스럽게 늘고 줄어듦 (인벤토리와 동일 원칙) */
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-height: 150px;
-    overflow-y: auto;
 }
 
 .quest-item {

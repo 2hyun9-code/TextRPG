@@ -1,5 +1,8 @@
 """아이템 데이터베이스 - 모든 아이템 정의를 한 곳에서 관리"""
 
+import random
+from datetime import date
+
 from models import Item, ItemType
 
 ITEMS_DB = {
@@ -103,12 +106,33 @@ ITEMS_DB = {
     },
 }
 
-# 상점에서 판매하는 아이템 목록
-SHOP_STOCK = [
-    "rusty_sword", "iron_sword", "steel_sword", "hunting_bow", "oak_staff",
-    "leather_armor", "chain_mail", "plate_armor",
-    "small_potion", "medium_potion", "large_potion", "torch",
-]
+# 상점 재고 순환: 핵심 재고(항상 판매)는 고정, 중/고급 장비는 매일 자정 기준으로
+# 일부만 순환 노출되어 매일 상점에 들를 이유를 만든다.
+CORE_STOCK = ["torch", "small_potion", "medium_potion", "large_potion", "rusty_sword", "leather_armor"]
+ROTATING_POOL = ["iron_sword", "steel_sword", "hunting_bow", "oak_staff", "chain_mail", "plate_armor"]
+ROTATING_COUNT = 3          # 순환 재고 중 오늘 진열되는 개수
+SPECIAL_DISCOUNT = 0.2      # 오늘의 특가 할인율 (20%)
+
+# 하위 호환 및 유효성 검증용 전체 재고 목록 (실제 진열은 get_daily_stock() 사용)
+SHOP_STOCK = CORE_STOCK + ROTATING_POOL
+
+
+def get_daily_stock(today: date = None) -> list:
+    """오늘 날짜를 시드로 결정되는 실제 진열 재고. 자정에 자동으로 바뀐다."""
+    if today is None:
+        today = date.today()
+    rng = random.Random(f"shop-{today.isoformat()}")
+    rotating_today = rng.sample(ROTATING_POOL, min(ROTATING_COUNT, len(ROTATING_POOL)))
+    return CORE_STOCK + rotating_today
+
+
+def get_daily_special(today: date = None) -> str:
+    """오늘의 특가 아이템 id (당일 진열 재고 중 하나, 할인 적용 대상)"""
+    if today is None:
+        today = date.today()
+    stock = get_daily_stock(today)
+    rng = random.Random(f"special-{today.isoformat()}")
+    return rng.choice(stock)
 
 
 def create_item(item_id: str, quantity: int = 1) -> Item:

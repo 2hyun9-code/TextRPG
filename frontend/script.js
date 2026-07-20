@@ -69,12 +69,11 @@ const elements = {
     closeSettingsBtn: document.getElementById('closeSettingsBtn'),
     playerNameInput: document.getElementById('playerNameInput'),
     saveNameBtn: document.getElementById('saveNameBtn'),
-    ollamaUrlInput: document.getElementById('ollamaUrlInput'),
     testOllamaBtn: document.getElementById('testOllamaBtn'),
     ollamaStatus: document.getElementById('ollamaStatus'),
     mpValue: document.getElementById('mpValue'),
     mpBarFill: document.getElementById('mpBarFill'),
-    skillBtn: document.getElementById('skillBtn'),
+    skillButtons: document.getElementById('skillButtons'),
     statusEffects: document.getElementById('statusEffects'),
     modelSelect: document.getElementById('modelSelect'),
     applyModelBtn: document.getElementById('applyModelBtn'),
@@ -421,13 +420,8 @@ function updateCombatPanel() {
         elements.actionInput.disabled = true;
         elements.submitBtn.disabled = true;
 
-        // 스킬 버튼: 이름 + 소모 정신력, 부족하면 비활성
-        const skill = currentPlayer.skill;
-        if (skill) {
-            elements.skillBtn.textContent = `${skill.name} (${skill.mp_cost})`;
-            elements.skillBtn.disabled = (currentPlayer.mp ?? 0) < skill.mp_cost;
-            elements.skillBtn.title = skill.description;
-        }
+        // 스킬 버튼: 레벨에 따라 1~2개, 이름 + 소모 정신력, 부족하면 비활성
+        renderSkillButtons();
 
         // 상태 이상 표시
         const effects = currentPlayer.status_effects || [];
@@ -443,6 +437,28 @@ function updateCombatPanel() {
             elements.submitBtn.disabled = false;
         }
     }
+}
+
+function renderSkillButtons() {
+    const skills = currentPlayer.skills || [];
+    const mp = currentPlayer.mp ?? 0;
+
+    elements.skillButtons.innerHTML = skills.map(s => `
+        <button class="btn btn-primary skill-btn" data-skill-id="${s.id}"
+                title="${s.description}" ${mp < s.mp_cost ? 'disabled' : ''}>
+            ${s.name} (${s.mp_cost})
+        </button>
+    `).join('');
+
+    elements.skillButtons.querySelectorAll('[data-skill-id]').forEach(btn => {
+        btn.addEventListener('click', () => combatAction('skill', btn.dataset.skillId));
+    });
+}
+
+function setSkillButtonsDisabled(disabled) {
+    elements.skillButtons.querySelectorAll('button').forEach(btn => {
+        btn.disabled = disabled;
+    });
 }
 
 async function startCombat() {
@@ -467,15 +483,18 @@ async function startCombat() {
     }
 }
 
-async function combatAction(endpoint) {
+async function combatAction(endpoint, skillId) {
     if (gameState.isLoading) return;
     gameState.isLoading = true;
     elements.attackBtn.disabled = true;
-    elements.skillBtn.disabled = true;
+    setSkillButtonsDisabled(true);
     elements.fleeBtn.disabled = true;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/combat/${endpoint}`, { method: 'POST' });
+        const url = skillId
+            ? `${API_BASE_URL}/combat/${endpoint}?skill_id=${encodeURIComponent(skillId)}`
+            : `${API_BASE_URL}/combat/${endpoint}`;
+        const response = await fetch(url, { method: 'POST' });
 
         if (!response.ok) {
             const error = await response.json();
@@ -514,12 +533,15 @@ async function openShop() {
         elements.shopGold.textContent = data.gold;
 
         elements.shopBuyList.innerHTML = data.stock.map(item => `
-            <div class="shop-item">
+            <div class="shop-item ${item.is_special ? 'shop-item-special' : ''}">
                 <div class="shop-item-info">
-                    <div class="shop-item-name">${item.name}</div>
+                    <div class="shop-item-name">${item.name}${item.is_special ? ' <span class="special-badge">오늘의 특가</span>' : ''}</div>
                     <div class="shop-item-desc">${item.description}</div>
                 </div>
-                <span class="shop-item-price">${item.price} G</span>
+                <span class="shop-item-price">
+                    ${item.is_special ? `<span class="original-price">${item.original_price} G</span>` : ''}
+                    ${item.price} G
+                </span>
                 <button class="btn btn-small" data-buy-item="${item.id}">구매</button>
             </div>
         `).join('');
@@ -1133,7 +1155,6 @@ function setupEventListeners() {
 
     elements.huntBtn.addEventListener('click', startCombat);
     elements.attackBtn.addEventListener('click', () => combatAction('attack'));
-    elements.skillBtn.addEventListener('click', () => combatAction('skill'));
     elements.fleeBtn.addEventListener('click', () => combatAction('flee'));
     elements.applyModelBtn.addEventListener('click', applyModel);
     elements.restBtn.addEventListener('click', restAtInn);

@@ -284,13 +284,13 @@ class PlayerState(BaseModel):
         self.defense = stats["defense"]
 
     def dict(self, **kwargs) -> Dict[str, Any]:
-        from skills_db import get_skill
+        from skills_db import get_available_skills
         data = super().model_dump(**kwargs)
         # 프론트엔드 표시용 계산 스탯 (저장 시 무시됨)
         data["effective_attack"] = self.get_effective_attack()
         data["effective_defense"] = self.get_effective_defense()
         data["exp_required"] = self.exp_required()
-        data["skill"] = get_skill(self.job_class.value)
+        data["skills"] = get_available_skills(self.job_class.value, self.level)
         return data
 
 
