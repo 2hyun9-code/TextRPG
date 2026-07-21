@@ -173,7 +173,7 @@ class OllamaClient:
 
         return f"""당신은 텍스트 RPG 모험의 나레이터입니다. 플레이어는 {player_state.name}, 레벨 {player_state.level} {job_name}입니다.
 {story_context}
-현재 상태:
+[아래는 당신만 참고할 내부 정보입니다. 이미 화면에 따로 표시되므로 응답 텍스트에 그대로 나열하지 마세요]
 - 체력: {player_state.hp}/{player_state.max_hp}
 - 공격: {player_state.get_effective_attack()}
 - 방어: {player_state.get_effective_defense()}
@@ -195,6 +195,7 @@ class OllamaClient:
 5. 매력적이고 몰입감 있게 하세요
 6. 가능한 다음 행동을 제안하되 강요하지 마세요
 7. 이야기 요약에 담긴 목표와 사건을 자연스럽게 이어가세요. 단, 플레이어가 다른 길을 선택하면 그 선택을 존중하고 이야기를 그 방향으로 전개하세요
+8. 절대 하지 말 것: 체력/공격/방어/골드 수치, 인벤토리 목록, "현재 상태는 다음과 같습니다" 같은 상태 요약을 응답에 나열하지 마세요. 오직 이야기 서술과 다음 행동 제안만 하세요
 
 언어 규칙: 반드시 100% 한글로만 응답하세요. 영어 단어, 알파벳, 한자(漢字/中文) 등 한글이 아닌 문자를 단 한 글자도 섞지 마세요."""
 
