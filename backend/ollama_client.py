@@ -128,8 +128,8 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                    # 출력 길이를 못박아 응답 시간의 상한을 보장 (지시문의 "2-3문장"과 일치)
-                    "options": {"num_predict": 100},
+                    # 문장이 중간에 끊기지 않도록 여유 있게 설정 (완결된 응답 보장)
+                    "options": {"num_predict": 300},
                 },
                 timeout=60.0
             )
@@ -163,7 +163,7 @@ class OllamaClient:
                     "model": self.model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {"num_predict": 100},
+                    "options": {"num_predict": 300},
                 },
                 timeout=60.0
             ) as response:
