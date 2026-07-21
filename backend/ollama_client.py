@@ -436,11 +436,12 @@ class OllamaClient:
 2. 골드를 줍거나 잃었으면 gold에 숫자 (없으면 0)
 3. 다치거나 회복했으면 hp에 숫자 (다침은 음수, 없으면 0)
 4. 물건을 획득했으면 item_name에 이름, item_kind에 "weapon"/"armor"/"potion" 중 하나 (없으면 null)
-5. 대부분의 서사에는 아무 변화가 없습니다. 확실하지 않으면 0과 null을 쓰세요.
-6. item_name은 반드시 100% 한글로만 작성하세요. 영어 단어, 알파벳, 한자(漢字/中文) 등 한글이 아닌 문자를 단 한 글자도 섞지 마세요.
+5. 몬스터/적을 쓰러뜨리거나 처치했으면 kills에 처치한 마리 수 (없으면 0)
+6. 대부분의 서사에는 아무 변화가 없습니다. 확실하지 않으면 0과 null을 쓰세요.
+7. item_name은 반드시 100% 한글로만 작성하세요. 영어 단어, 알파벳, 한자(漢字/中文) 등 한글이 아닌 문자를 단 한 글자도 섞지 마세요.
 
 반드시 이 JSON 형식으로만 답하세요:
-{{"gold": 0, "hp": 0, "item_name": null, "item_kind": null}}"""
+{{"gold": 0, "hp": 0, "item_name": null, "item_kind": null, "kills": 0}}"""
 
         data = await self._generate_json(prompt, timeout=20.0)
         if not data:
@@ -452,6 +453,7 @@ class OllamaClient:
                 "hp": int(data.get("hp") or 0),
                 "item_name": str(data["item_name"]).strip() if data.get("item_name") else None,
                 "item_kind": str(data["item_kind"]).strip() if data.get("item_kind") else None,
+                "kills": int(data.get("kills") or 0),
             }
         except (ValueError, TypeError):
             return None

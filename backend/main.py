@@ -58,7 +58,7 @@ BOSS_MIN_PLAYER_LEVEL = 3  # 이 레벨 미만에서는 보스 미등장 (초반
 # 행동 한 번에 AI를 여러 번 호출하면(서사+퀘스트훅+이벤트추출) 느린 하드웨어에서
 # 응답이 크게 늘어지므로, 두 부가 기능은 매 턴이 아닌 확률적으로만 실행한다.
 SPECIAL_EVENT_CHANCE = 0.20  # 지도 소지 시 퀘스트 훅이 뜰 확률
-STORY_EVENT_CHANCE = 0.40    # 서사 속 골드/체력/아이템 변화를 반영 시도할 확률
+STORY_EVENT_CHANCE = 1.0     # 서사 속 골드/체력/아이템/처치 변화를 반영 시도할 확률 (자유 서술도 스탯에 100% 반영)
 
 app = FastAPI(title="Text RPG")
 
@@ -1277,6 +1277,19 @@ async def _apply_story_events(player: PlayerState, narrative: str) -> list:
 
         if item and player.inventory.add_item(item):
             logs.append(f"획득: {item.name}")
+
+    # 처치: 자유 서술에서 묘사된 몬스터 처치도 정식 전투와 동일한 공식으로 보상
+    kills = max(0, min(3, events.get("kills", 0)))  # 한 턴에 과도한 처치 서술로 파밍하는 것을 방지
+    for _ in range(kills):
+        player.stats_kills += 1
+        xp = stat_formula_xp(player.level)
+        gained_gold = stat_formula_gold(player.level)
+        player.gold += gained_gold
+        levels_gained = player.gain_experience(xp)
+        logs.append(f"몬스터를 처치했다. 경험치 +{xp}, 골드 +{gained_gold}")
+        if levels_gained > 0:
+            logs.append(f"레벨 업! 현재 레벨 {player.level} (체력/정신력 전체 회복)")
+        _update_quest_progress(player, "", logs)
 
     if logs:
         player.add_history("시스템", " / ".join(logs))
