@@ -8,6 +8,8 @@ from models import PlayerState, AIResponse
 
 logger = logging.getLogger("textrpg.ollama")
 
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
 
 class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
@@ -15,13 +17,27 @@ class OllamaClient:
         #   OLLAMA_URL=http://다른서버:11434 OLLAMA_MODEL=llama2-uncensored python run.py
         self.base_url = os.getenv("OLLAMA_URL", base_url)
         self.model = os.getenv("OLLAMA_MODEL", "gemma2:2b")
+        # AI_BACKEND=nvidia + NVIDIA_API_KEY 설정 시 build.nvidia.com(NIM) 클라우드 API 사용
+        self.backend = os.getenv("AI_BACKEND", "ollama").lower()
+        self.nvidia_api_key = os.getenv("NVIDIA_API_KEY", "")
+        self.nvidia_model = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
         self.client = httpx.AsyncClient(timeout=60.0)
+
+    @property
+    def using_nvidia(self) -> bool:
+        return self.backend == "nvidia" and bool(self.nvidia_api_key)
+
+    @property
+    def current_model(self) -> str:
+        return self.nvidia_model if self.using_nvidia else self.model
 
     async def close(self):
         await self.client.aclose()
 
     async def list_models(self) -> list:
-        """설치된 Ollama 모델 목록 (실패 시 빈 목록)"""
+        """설치된 Ollama 모델 목록 (실패 시 빈 목록). NVIDIA 백엔드에서는 현재 모델 하나만 반환"""
+        if self.using_nvidia:
+            return [self.nvidia_model]
         try:
             response = await self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
             response.raise_for_status()
@@ -31,7 +47,10 @@ class OllamaClient:
             return []
 
     async def warmup(self) -> None:
-        """서버 시작 시 모델을 미리 메모리에 로드해 첫 요청 지연을 없앤다."""
+        """서버 시작 시 모델을 미리 메모리에 로드해 첫 요청 지연을 없앤다 (NVIDIA 백엔드는 불필요)."""
+        if self.using_nvidia:
+            logger.info("NVIDIA API 백엔드 사용 중 (%s) - 프리워밍 건너뜀", self.nvidia_model)
+            return
         try:
             await self.client.post(
                 f"{self.base_url}/api/generate",
@@ -43,6 +62,92 @@ class OllamaClient:
             logger.warning("Ollama 서버에 연결할 수 없습니다. 프리워밍을 건너뜁니다.")
         except Exception as e:
             logger.warning("프리워밍 실패 (게임은 계속 진행됩니다): %s", e)
+
+    async def _complete(self, prompt: str, num_predict: int, timeout: float = 60.0) -> str:
+        """백엔드(Ollama/NVIDIA)에 맞춰 완결된 응답 텍스트를 생성"""
+        if self.using_nvidia:
+            response = await self.client.post(
+                f"{NVIDIA_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
+                json={
+                    "model": self.nvidia_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": num_predict,
+                    "stream": False,
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"].strip()
+
+        response = await self.client.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": num_predict},
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json().get("response", "").strip()
+
+    async def _complete_stream(
+        self, prompt: str, num_predict: int, timeout: float = 60.0
+    ) -> AsyncGenerator[str, None]:
+        """백엔드(Ollama/NVIDIA)에 맞춰 토큰이 생성되는 대로 흘려보낸다"""
+        if self.using_nvidia:
+            async with self.client.stream(
+                "POST",
+                f"{NVIDIA_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
+                json={
+                    "model": self.nvidia_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": num_predict,
+                    "stream": True,
+                },
+                timeout=timeout,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:"):].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        yield delta
+            return
+
+        async with self.client.stream(
+            "POST",
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": True,
+                "options": {"num_predict": num_predict},
+            },
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chunk = data.get("response", "")
+                if chunk:
+                    yield chunk
 
     def _build_system_prompt(self, player_state: PlayerState) -> str:
         weapon_info = f"장착된 무기: {player_state.equipment.weapon.name} (+{player_state.equipment.weapon.effect.get('attack_bonus', 0)} 공격)" if player_state.equipment.weapon else "장착된 무기 없음"
@@ -122,26 +227,15 @@ class OllamaClient:
         prompt = self._build_action_prompt(player_state, player_action)
 
         try:
-            response = await self.client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    # 문장이 중간에 끊기지 않도록 여유 있게 설정 (완결된 응답 보장)
-                    "options": {"num_predict": 300},
-                },
-                timeout=60.0
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result.get("response", "공기가 고요해진다...").strip()
+            # 문장이 중간에 끊기지 않도록 여유 있게 설정 (완결된 응답 보장)
+            text = await self._complete(prompt, num_predict=300, timeout=60.0)
+            return text or "공기가 고요해진다..."
         except httpx.TimeoutException:
             logger.warning("나레이터 응답 시간 초과")
             return "[나레이터가 생각에 잠겨 말이 없다... 잠시 후 다시 시도해주세요]"
         except httpx.ConnectError:
-            logger.error("Ollama 서버 연결 실패")
-            return "[나레이터가 자리를 비웠다... Ollama가 실행 중인지 확인해주세요]"
+            logger.error("AI 서버 연결 실패")
+            return "[나레이터가 자리를 비웠다... AI 서버 연결을 확인해주세요]"
         except httpx.HTTPStatusError as e:
             logger.error("Ollama HTTP 오류: %s", e)
             return "[나레이터가 말을 잇지 못한다... 잠시 후 다시 시도해주세요]"
@@ -156,38 +250,18 @@ class OllamaClient:
         prompt = self._build_action_prompt(player_state, player_action)
 
         try:
-            async with self.client.stream(
-                "POST",
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": True,
-                    "options": {"num_predict": 300},
-                },
-                timeout=60.0
-            ) as response:
-                response.raise_for_status()
-                got_any = False
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    chunk = data.get("response", "")
-                    if chunk:
-                        got_any = True
-                        yield chunk
-                if not got_any:
-                    yield "공기가 고요해진다..."
+            got_any = False
+            async for chunk in self._complete_stream(prompt, num_predict=300, timeout=60.0):
+                got_any = True
+                yield chunk
+            if not got_any:
+                yield "공기가 고요해진다..."
         except httpx.TimeoutException:
             logger.warning("나레이터 스트리밍 응답 시간 초과")
             yield "[나레이터가 생각에 잠겨 말이 없다... 잠시 후 다시 시도해주세요]"
         except httpx.ConnectError:
-            logger.error("Ollama 서버 연결 실패 (스트리밍)")
-            yield "[나레이터가 자리를 비웠다... Ollama가 실행 중인지 확인해주세요]"
+            logger.error("AI 서버 연결 실패 (스트리밍)")
+            yield "[나레이터가 자리를 비웠다... AI 서버 연결을 확인해주세요]"
         except httpx.HTTPStatusError as e:
             logger.error("Ollama HTTP 오류 (스트리밍): %s", e)
             yield "[나레이터가 말을 잇지 못한다... 잠시 후 다시 시도해주세요]"
@@ -229,45 +303,38 @@ class OllamaClient:
 갱신된 요약:"""
 
         try:
-            response = await self.client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": 200},
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            new_summary = result.get("response", "").strip()
+            new_summary = await self._complete(prompt, num_predict=200)
             # 요약 생성 실패 시 기존 요약 유지 (기억 손실 방지)
             return new_summary if new_summary else old_summary
         except httpx.TimeoutException:
             logger.warning("요약 생성 시간 초과 - 기존 요약 유지")
             return old_summary
         except httpx.ConnectError:
-            logger.error("Ollama 서버 연결 실패 (요약) - 기존 요약 유지")
+            logger.error("AI 서버 연결 실패 (요약) - 기존 요약 유지")
             return old_summary
         except Exception as e:
             logger.error("요약 생성 중 오류: %s - 기존 요약 유지", e)
             return old_summary
 
     async def _generate_json(self, prompt: str, timeout: float = 30.0) -> Optional[dict]:
-        """JSON 강제 모드로 생성. 실패 시 None (폴백은 호출자 책임)"""
+        """JSON 응답 생성. 실패 시 None (폴백은 호출자 책임)"""
         try:
-            response = await self.client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                },
-                timeout=timeout
-            )
-            response.raise_for_status()
-            raw = response.json().get("response", "").strip()
+            if self.using_nvidia:
+                raw = await self._complete(prompt, num_predict=300, timeout=timeout)
+            else:
+                # Ollama는 format=json으로 JSON 출력을 강제할 수 있다
+                response = await self.client.post(
+                    f"{self.base_url}/api/generate",
+                    json={
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "format": "json",
+                    },
+                    timeout=timeout
+                )
+                response.raise_for_status()
+                raw = response.json().get("response", "").strip()
             # JSON 블록 추출 (모델이 여분 텍스트를 붙이는 경우 대비)
             match = re.search(r"\{.*\}", raw, re.DOTALL)
             if match:
@@ -277,7 +344,7 @@ class OllamaClient:
             logger.warning("JSON 생성 시간 초과")
             return None
         except httpx.ConnectError:
-            logger.error("Ollama 서버 연결 실패 (JSON 생성)")
+            logger.error("AI 서버 연결 실패 (JSON 생성)")
             return None
         except json.JSONDecodeError:
             logger.warning("JSON 파싱 실패 - 모델 응답 형식이 올바르지 않음")
@@ -402,24 +469,13 @@ class OllamaClient:
 언어 규칙: 반드시 100% 한국어로만 작성하세요. 영어 단어나 알파벳을 단 한 글자도 섞지 마세요."""
 
         try:
-            response = await self.client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": 100},
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            quest = result.get("response", "").strip()
+            quest = await self._complete(prompt, num_predict=100)
             return f"[새로운 퀘스트] {quest}" if quest else None
         except httpx.TimeoutException:
             logger.warning("특수 이벤트 생성 시간 초과")
             return None
         except httpx.ConnectError:
-            logger.error("Ollama 서버 연결 실패 (특수 이벤트)")
+            logger.error("AI 서버 연결 실패 (특수 이벤트)")
             return None
         except Exception as e:
             logger.error("특수 이벤트 생성 중 오류: %s", e)

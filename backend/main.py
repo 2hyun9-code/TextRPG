@@ -1495,12 +1495,17 @@ async def admin_compress_memory():
 async def ollama_models():
     """설치된 Ollama 모델 목록 + 현재 사용 중인 모델"""
     models = await ollama.list_models()
-    return {"models": models, "current": ollama.model}
+    return {"models": models, "current": ollama.current_model}
 
 
 @app.post("/api/ollama/model")
 async def set_ollama_model(name: str):
-    """사용할 모델 변경 (서버 재시작 시 초기화 - 영구 변경은 OLLAMA_MODEL 환경변수)"""
+    """사용할 모델 변경 (서버 재시작 시 초기화 - 영구 변경은 OLLAMA_MODEL/NVIDIA_MODEL 환경변수)"""
+    if ollama.using_nvidia:
+        ollama.nvidia_model = name
+        logger.info("NVIDIA 모델 변경: %s", name)
+        return {"message": f"모델을 {name}(으)로 변경했습니다", "current": name}
+
     models = await ollama.list_models()
     if models and name not in models:
         raise HTTPException(status_code=400, detail=f"설치되지 않은 모델입니다: {name}")
