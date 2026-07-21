@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import json
 import logging
@@ -9,6 +10,8 @@ from models import PlayerState, AIResponse
 logger = logging.getLogger("textrpg.ollama")
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MAX_RETRIES = 3
+NVIDIA_RETRY_BASE_DELAY = 1.5  # 초 단위, 429 재시도 시 지수 백오프의 기준값
 
 
 class OllamaClient:
@@ -63,21 +66,46 @@ class OllamaClient:
         except Exception as e:
             logger.warning("프리워밍 실패 (게임은 계속 진행됩니다): %s", e)
 
+    async def _nvidia_post(self, payload: dict, timeout: float) -> httpx.Response:
+        """NVIDIA API POST. 한 턴에 여러 호출이 겹칠 때 발생하는 429를 짧은 대기 후 재시도"""
+        last_exc = None
+        for attempt in range(NVIDIA_MAX_RETRIES):
+            try:
+                response = await self.client.post(
+                    f"{NVIDIA_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
+                    json=payload,
+                    timeout=timeout,
+                )
+                if response.status_code == 429 and attempt < NVIDIA_MAX_RETRIES - 1:
+                    delay = NVIDIA_RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning("NVIDIA API 429 - %.1f초 후 재시도 (%d/%d)", delay, attempt + 1, NVIDIA_MAX_RETRIES)
+                    await asyncio.sleep(delay)
+                    continue
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                if e.response.status_code == 429 and attempt < NVIDIA_MAX_RETRIES - 1:
+                    delay = NVIDIA_RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning("NVIDIA API 429 - %.1f초 후 재시도 (%d/%d)", delay, attempt + 1, NVIDIA_MAX_RETRIES)
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+        raise last_exc
+
     async def _complete(self, prompt: str, num_predict: int, timeout: float = 60.0) -> str:
         """백엔드(Ollama/NVIDIA)에 맞춰 완결된 응답 텍스트를 생성"""
         if self.using_nvidia:
-            response = await self.client.post(
-                f"{NVIDIA_BASE_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
-                json={
+            response = await self._nvidia_post(
+                {
                     "model": self.nvidia_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": num_predict,
                     "stream": False,
                 },
-                timeout=timeout,
+                timeout,
             )
-            response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"].strip()
 
         response = await self.client.post(
@@ -98,32 +126,48 @@ class OllamaClient:
     ) -> AsyncGenerator[str, None]:
         """백엔드(Ollama/NVIDIA)에 맞춰 토큰이 생성되는 대로 흘려보낸다"""
         if self.using_nvidia:
-            async with self.client.stream(
-                "POST",
-                f"{NVIDIA_BASE_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
-                json={
-                    "model": self.nvidia_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": num_predict,
-                    "stream": True,
-                },
-                timeout=timeout,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line or not line.startswith("data:"):
+            nvidia_payload = {
+                "model": self.nvidia_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": num_predict,
+                "stream": True,
+            }
+            for attempt in range(NVIDIA_MAX_RETRIES):
+                try:
+                    async with self.client.stream(
+                        "POST",
+                        f"{NVIDIA_BASE_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.nvidia_api_key}"},
+                        json=nvidia_payload,
+                        timeout=timeout,
+                    ) as response:
+                        if response.status_code == 429 and attempt < NVIDIA_MAX_RETRIES - 1:
+                            delay = NVIDIA_RETRY_BASE_DELAY * (2 ** attempt)
+                            logger.warning("NVIDIA API 429 (스트리밍) - %.1f초 후 재시도 (%d/%d)", delay, attempt + 1, NVIDIA_MAX_RETRIES)
+                            await asyncio.sleep(delay)
+                            continue
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            payload = line[len("data:"):].strip()
+                            if payload == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+                            delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                yield delta
+                        return
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429 and attempt < NVIDIA_MAX_RETRIES - 1:
+                        delay = NVIDIA_RETRY_BASE_DELAY * (2 ** attempt)
+                        logger.warning("NVIDIA API 429 (스트리밍) - %.1f초 후 재시도 (%d/%d)", delay, attempt + 1, NVIDIA_MAX_RETRIES)
+                        await asyncio.sleep(delay)
                         continue
-                    payload = line[len("data:"):].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta:
-                        yield delta
+                    raise
             return
 
         async with self.client.stream(
